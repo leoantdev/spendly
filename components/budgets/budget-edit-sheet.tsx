@@ -82,7 +82,7 @@ export function BudgetEditSheet({
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>{children}</SheetTrigger>
-      <SheetContent side="bottom" className="rounded-t-2xl">
+      <SheetContent side="bottom">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <span
@@ -97,7 +97,7 @@ export function BudgetEditSheet({
             Set a budget for this category. Use 0 to clear.
           </SheetDescription>
         </SheetHeader>
-        <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4">
+        <form onSubmit={onSubmit} className="flex flex-col gap-4 px-4 pb-6">
           <input type="hidden" name="categoryId" value={categoryId} />
           <input type="hidden" name="monthYear" value={monthYear} />
           <div className="flex flex-col gap-4">
@@ -112,7 +112,7 @@ export function BudgetEditSheet({
                 step="0.01"
                 defaultValue={budgetAmount ?? ""}
                 placeholder="0.00"
-                className="min-h-11 text-base tabular-nums"
+                className="min-h-11 px-4 py-2.5 text-base tabular-nums"
                 required
               />
               <FieldDescription>
