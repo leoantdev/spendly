@@ -44,7 +44,12 @@ import {
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { CATEGORY_COLOR_PRESETS } from "@/lib/constants"
+import { cn } from "@/lib/utils"
 import type { Category, TransactionType } from "@/lib/types"
+
+function hexColorsEqual(a: string, b: string) {
+  return a.trim().toLowerCase() === b.trim().toLowerCase()
+}
 
 function CategoryDialog({
   title,
@@ -127,19 +132,25 @@ function CategoryDialog({
               <FieldLabel>Color</FieldLabel>
               <input type="hidden" name="color" value={color} />
               <div className="flex flex-wrap gap-2">
-                {CATEGORY_COLOR_PRESETS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    className="size-9 rounded-full ring-offset-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    style={{
-                      backgroundColor: c,
-                      outline: color === c ? "2px solid hsl(var(--foreground))" : undefined,
-                    }}
-                    onClick={() => setColor(c)}
-                    aria-label={`Color ${c}`}
-                  />
-                ))}
+                {CATEGORY_COLOR_PRESETS.map((c) => {
+                  const selected = hexColorsEqual(color, c)
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      className={cn(
+                        "size-9 shrink-0 rounded-full transition-[box-shadow,transform] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                        selected
+                          ? "z-[1] scale-[1.04] ring-1 ring-foreground ring-offset-1 ring-offset-background"
+                          : "ring-1 ring-transparent ring-offset-1 ring-offset-background hover:scale-[1.02]",
+                      )}
+                      style={{ backgroundColor: c }}
+                      onClick={() => setColor(c)}
+                      aria-label={`Color ${c}`}
+                      aria-pressed={selected}
+                    />
+                  )
+                })}
               </div>
             </Field>
           </FieldGroup>

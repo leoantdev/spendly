@@ -7,19 +7,20 @@ import { toast } from "sonner"
 import { upsertBudgetAction } from "@/app/actions/budgets"
 import { Button } from "@/components/ui/button"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import {
   Field,
   FieldDescription,
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet"
 import { Spinner } from "@/components/ui/spinner"
 import { formatCurrency } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -80,11 +81,11 @@ export function BudgetEditSheet({
   }
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>{children}</SheetTrigger>
-      <SheetContent side="bottom">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>{children}</DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
             <span
               className="size-3 rounded-full"
               style={{
@@ -92,12 +93,12 @@ export function BudgetEditSheet({
               }}
             />
             {categoryName}
-          </SheetTitle>
-          <SheetDescription>
+          </DialogTitle>
+          <DialogDescription>
             Set a budget for this category. Use 0 to clear.
-          </SheetDescription>
-        </SheetHeader>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4 px-4 pb-6">
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <input type="hidden" name="categoryId" value={categoryId} />
           <input type="hidden" name="monthYear" value={monthYear} />
           <div className="flex flex-col gap-4">
@@ -151,18 +152,24 @@ export function BudgetEditSheet({
               </div>
             ) : null}
           </div>
-          <Button type="submit" className="min-h-11 w-full" disabled={pending}>
-            {pending ? (
-              <>
-                <Spinner />
-                Saving…
-              </>
-            ) : (
-              "Save budget"
-            )}
-          </Button>
+          <DialogFooter>
+            <Button
+              type="submit"
+              className="min-h-11 w-full sm:w-auto"
+              disabled={pending}
+            >
+              {pending ? (
+                <>
+                  <Spinner />
+                  Saving…
+                </>
+              ) : (
+                "Save budget"
+              )}
+            </Button>
+          </DialogFooter>
         </form>
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   )
 }
