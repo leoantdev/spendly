@@ -9,6 +9,15 @@ Mobile-first PWA for quick expense and income tracking. Built with **Next.js (Ap
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
+   For **TrueLayer Data API** (bank connection and reading accounts/transactions only — this app does **not** use TrueLayer Payments):
+
+   - `TRUELAYER_CLIENT_ID` / `TRUELAYER_CLIENT_SECRET` — from TrueLayer Console
+   - `TRUELAYER_REDIRECT_URI` — your OAuth redirect URL (must match Console)
+   - `TRUELAYER_BASE_URL` — Data API v1 base: `https://api.truelayer.com/data/v1` (live) or `https://api.truelayer-sandbox.com/data/v1` (sandbox)
+   - `TRUELAYER_MODE` — `live` or `sandbox` (must match the environment toggle in TrueLayer Console and your base URL)
+
+   Server code reads these via [`lib/truelayer/config.ts`](lib/truelayer/config.ts) (`import "server-only"`); do not prefix with `NEXT_PUBLIC_`.
+
 2. Apply the database schema (see [`supabase/migrations/20260406200000_spendly_mvp.sql`](supabase/migrations/20260406200000_spendly_mvp.sql)) in the Supabase SQL editor, or use the Supabase CLI.
 
 3. Install and run:

@@ -1,5 +1,34 @@
 export type TransactionType = "income" | "expense"
 
+export type BankConnectionStatus = "active" | "revoked" | "error"
+
+export type BankConnection = {
+  id: string
+  user_id: string
+  truelayer_user_id: string
+  access_token: string
+  refresh_token: string
+  consent_created_at: string | null
+  expires_at: string | null
+  status: BankConnectionStatus
+  created_at: string
+  updated_at: string
+}
+
+export type BankAccount = {
+  id: string
+  user_id: string
+  account_id: string
+  bank_connection_id: string
+  truelayer_account_id: string
+  name: string
+  institution: string
+  currency: string
+  last_synced_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type Profile = {
   id: string
   display_name: string | null
@@ -34,6 +63,9 @@ export type Transaction = {
   amount: string
   occurred_at: string
   note: string | null
+  truelayer_transaction_id: string | null
+  normalised_provider_transaction_id: string | null
+  provider_transaction_id: string | null
   created_at: string
 }
 
