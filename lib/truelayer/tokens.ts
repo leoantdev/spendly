@@ -1,7 +1,11 @@
 import "server-only"
 
 import { refreshAccessToken, TrueLayerApiError } from "@/lib/truelayer/client"
-import { createServerSupabaseClient } from "@/lib/supabase/server"
+import {
+  loadBankConnectionSecrets,
+  updateBankConnectionStatus,
+  updateBankConnectionTokenState,
+} from "@/lib/truelayer/secret-store"
 import type { BankConnection } from "@/lib/types"
 
 /** Proactive refresh if access token expires within this window (ms). */
@@ -58,21 +62,21 @@ export async function ensureBankConnectionAccessToken(
     )
   }
 
+  const secrets = await loadBankConnectionSecrets(connection.user_id, connection.id)
+
   if (!expiresAtNeedsRefresh(connection.expires_at)) {
-    return connection.access_token
+    return secrets.accessToken
   }
 
-  if (!connection.refresh_token?.trim()) {
+  if (!secrets.refreshToken.trim()) {
     throw new BankConnectionError(
       "Bank connection has no refresh token. Reconnect with offline access enabled.",
       "missing_refresh_token",
     )
   }
 
-  const supabase = await createServerSupabaseClient()
-
   try {
-    const tokens = await refreshAccessToken(connection.refresh_token)
+    const tokens = await refreshAccessToken(secrets.refreshToken)
     const expiresAt = new Date(
       Date.now() + tokens.expires_in * 1000,
     ).toISOString()
@@ -80,26 +84,17 @@ export async function ensureBankConnectionAccessToken(
     const nextRefresh =
       typeof tokens.refresh_token === "string" && tokens.refresh_token.length > 0
         ? tokens.refresh_token
-        : connection.refresh_token
+        : secrets.refreshToken
 
-    const { error: updateError } = await supabase
-      .from("bank_connections")
-      .update({
-        access_token: tokens.access_token,
-        refresh_token: nextRefresh,
-        expires_at: expiresAt,
-        status: "active",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", connection.id)
-
-    if (updateError) {
-      throw new BankConnectionError(
-        `Failed to save refreshed tokens: ${updateError.message}`,
-        "refresh_failed",
-        updateError,
-      )
-    }
+    await updateBankConnectionTokenState({
+      userId: connection.user_id,
+      connectionId: connection.id,
+      accessToken: tokens.access_token,
+      refreshToken: nextRefresh,
+      expiresAt,
+      status: "active",
+      updatedAt: new Date().toISOString(),
+    })
 
     return tokens.access_token
   } catch (e) {
@@ -107,13 +102,7 @@ export async function ensureBankConnectionAccessToken(
       throw e
     }
     if (isInvalidGrant(e)) {
-      await supabase
-        .from("bank_connections")
-        .update({
-          status: "revoked",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", connection.id)
+      await updateBankConnectionStatus(connection.user_id, connection.id, "revoked")
 
       throw new BankConnectionError(
         "Bank connection was revoked or expired. Please reconnect your bank.",
@@ -122,13 +111,7 @@ export async function ensureBankConnectionAccessToken(
       )
     }
 
-    await supabase
-      .from("bank_connections")
-      .update({
-        status: "error",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", connection.id)
+    await updateBankConnectionStatus(connection.user_id, connection.id, "error")
 
     const msg =
       e instanceof Error ? e.message : "Unknown error refreshing bank connection"

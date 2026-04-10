@@ -5,9 +5,6 @@ export type BankConnectionStatus = "active" | "revoked" | "error"
 export type BankConnection = {
   id: string
   user_id: string
-  truelayer_user_id: string
-  access_token: string
-  refresh_token: string
   consent_created_at: string | null
   expires_at: string | null
   status: BankConnectionStatus
@@ -20,7 +17,6 @@ export type BankAccount = {
   user_id: string
   account_id: string
   bank_connection_id: string
-  truelayer_account_id: string
   name: string
   institution: string
   currency: string
@@ -64,8 +60,6 @@ export type Transaction = {
   occurred_at: string
   note: string | null
   truelayer_transaction_id: string | null
-  normalised_provider_transaction_id: string | null
-  provider_transaction_id: string | null
   created_at: string
 }
 

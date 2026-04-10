@@ -4,19 +4,19 @@
  */
 
 export type TransactionIdFields = {
-  normalised_provider_transaction_id: string | null
-  provider_transaction_id: string | null
+  normalised_provider_transaction_id_hash: string | null
+  provider_transaction_id_hash: string | null
 }
 
 export function parseTransactionIdFields(
   row: Record<string, unknown>,
 ): TransactionIdFields {
-  const n = row.normalised_provider_transaction_id
-  const p = row.provider_transaction_id
+  const n = row.normalised_provider_transaction_id_hash
+  const p = row.provider_transaction_id_hash
   return {
-    normalised_provider_transaction_id:
+    normalised_provider_transaction_id_hash:
       typeof n === "string" && n.length > 0 ? n : null,
-    provider_transaction_id:
+    provider_transaction_id_hash:
       typeof p === "string" && p.length > 0 ? p : null,
   }
 }
@@ -26,7 +26,7 @@ export function addDedupeKeysForRow(
   set: Set<string>,
   row: Record<string, unknown>,
 ): void {
-  const { normalised_provider_transaction_id: n, provider_transaction_id: p } =
+  const { normalised_provider_transaction_id_hash: n, provider_transaction_id_hash: p } =
     parseTransactionIdFields(row)
   if (n) set.add(`n:${n}`)
   if (p) set.add(`p:${p}`)
@@ -40,7 +40,7 @@ export function transactionRowIsDuplicate(
   seenInBatch: Set<string>,
   row: Record<string, unknown>,
 ): boolean {
-  const { normalised_provider_transaction_id: n, provider_transaction_id: p } =
+  const { normalised_provider_transaction_id_hash: n, provider_transaction_id_hash: p } =
     parseTransactionIdFields(row)
   const keys: string[] = []
   if (n) keys.push(`n:${n}`)
@@ -54,7 +54,7 @@ export function markTransactionRowSeenInBatch(
   seenInBatch: Set<string>,
   row: Record<string, unknown>,
 ): void {
-  const { normalised_provider_transaction_id: n, provider_transaction_id: p } =
+  const { normalised_provider_transaction_id_hash: n, provider_transaction_id_hash: p } =
     parseTransactionIdFields(row)
   if (n) seenInBatch.add(`n:${n}`)
   if (p) seenInBatch.add(`p:${p}`)

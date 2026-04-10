@@ -14,6 +14,7 @@ import {
   type BankConnectionRedirectStatus,
 } from "@/lib/truelayer/oauth"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
+import { upsertBankConnectionSecretState } from "@/lib/truelayer/secret-store"
 
 function redirectWithBankStatus(
   origin: string,
@@ -119,23 +120,19 @@ export async function GET(request: NextRequest) {
       : null
   const nowIso = new Date().toISOString()
 
-  const payload = {
-    user_id: user.id,
-    truelayer_user_id: credentialsId,
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    consent_created_at: consentCreatedAt,
-    expires_at: expiresAt,
-    status: "active" as const,
-    updated_at: nowIso,
-  }
-
-  const { error: upsertError } = await supabase.from("bank_connections").upsert(payload, {
-    onConflict: "user_id,truelayer_user_id",
-  })
-
-  if (upsertError) {
-    console.warn("[TrueLayer callback] Upsert bank_connections failed:", upsertError)
+  try {
+    await upsertBankConnectionSecretState({
+      userId: user.id,
+      truelayerUserId: credentialsId,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      consentCreatedAt,
+      expiresAt,
+      status: "active",
+      updatedAt: nowIso,
+    })
+  } catch (e) {
+    console.warn("[TrueLayer callback] Upsert bank_connections failed:", e)
     return redirectWithBankStatus(origin, "failed")
   }
 

@@ -8,6 +8,7 @@ Mobile-first PWA for quick expense and income tracking. Built with **Next.js (Ap
 
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY` for server-only Vault/token management. Never expose this to the browser.
 
    For **TrueLayer Data API** (bank connection and reading accounts/transactions only — this app does **not** use TrueLayer Payments):
 

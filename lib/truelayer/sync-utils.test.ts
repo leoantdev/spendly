@@ -11,8 +11,8 @@ describe("addDedupeKeysForRow", () => {
   it("adds both keys when row has normalised and provider IDs", () => {
     const set = new Set<string>()
     addDedupeKeysForRow(set, {
-      normalised_provider_transaction_id: "norm-1",
-      provider_transaction_id: "prov-1",
+      normalised_provider_transaction_id_hash: "norm-1",
+      provider_transaction_id_hash: "prov-1",
     })
     expect(set.has("n:norm-1")).toBe(true)
     expect(set.has("p:prov-1")).toBe(true)
@@ -21,8 +21,8 @@ describe("addDedupeKeysForRow", () => {
   it("adds only provider key when normalised is null", () => {
     const set = new Set<string>()
     addDedupeKeysForRow(set, {
-      normalised_provider_transaction_id: null,
-      provider_transaction_id: "prov-only",
+      normalised_provider_transaction_id_hash: null,
+      provider_transaction_id_hash: "prov-only",
     })
     expect(set.has("p:prov-only")).toBe(true)
     expect(set.size).toBe(1)
@@ -34,8 +34,8 @@ describe("transactionRowIsDuplicate / markTransactionRowSeenInBatch", () => {
     const existing = new Set<string>(["p:shared-prov"])
     const batch = new Set<string>()
     const row = {
-      normalised_provider_transaction_id: "new-norm",
-      provider_transaction_id: "shared-prov",
+      normalised_provider_transaction_id_hash: "new-norm",
+      provider_transaction_id_hash: "shared-prov",
     }
     expect(transactionRowIsDuplicate(existing, batch, row)).toBe(true)
   })
@@ -44,8 +44,8 @@ describe("transactionRowIsDuplicate / markTransactionRowSeenInBatch", () => {
     const existing = new Set<string>(["p:other"])
     const batch = new Set<string>()
     const row = {
-      normalised_provider_transaction_id: "n1",
-      provider_transaction_id: "p1",
+      normalised_provider_transaction_id_hash: "n1",
+      provider_transaction_id_hash: "p1",
     }
     expect(transactionRowIsDuplicate(existing, batch, row)).toBe(false)
     markTransactionRowSeenInBatch(batch, row)
@@ -57,12 +57,12 @@ describe("transactionRowIsDuplicate / markTransactionRowSeenInBatch", () => {
     const existing = new Set<string>()
     const batch = new Set<string>()
     const first = {
-      normalised_provider_transaction_id: null,
-      provider_transaction_id: "dup",
+      normalised_provider_transaction_id_hash: null,
+      provider_transaction_id_hash: "dup",
     }
     const second = {
-      normalised_provider_transaction_id: "norm-x",
-      provider_transaction_id: "dup",
+      normalised_provider_transaction_id_hash: "norm-x",
+      provider_transaction_id_hash: "dup",
     }
     expect(transactionRowIsDuplicate(existing, batch, first)).toBe(false)
     markTransactionRowSeenInBatch(batch, first)
@@ -72,8 +72,8 @@ describe("transactionRowIsDuplicate / markTransactionRowSeenInBatch", () => {
   it("treats row with no IDs as duplicate (skip insert)", () => {
     expect(
       transactionRowIsDuplicate(new Set(), new Set(), {
-        normalised_provider_transaction_id: null,
-        provider_transaction_id: null,
+        normalised_provider_transaction_id_hash: null,
+        provider_transaction_id_hash: null,
       }),
     ).toBe(true)
   })

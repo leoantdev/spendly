@@ -3,6 +3,7 @@ import "server-only"
 import { format, subDays } from "date-fns"
 
 import { getAccounts, getTransactions, type TrueLayerTransaction } from "@/lib/truelayer/client"
+import { hashSensitiveValue } from "@/lib/truelayer/secret-store"
 import { BankConnectionError, ensureBankConnectionAccessToken } from "@/lib/truelayer/tokens"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import type { BankConnection, TransactionType } from "@/lib/types"
@@ -37,6 +38,11 @@ function readNumber(r: Record<string, unknown>, key: string): number | null {
     return Number.isFinite(n) ? n : null
   }
   return null
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message
+  return "Unknown error"
 }
 
 function parseTrueLayerAccount(
@@ -84,7 +90,9 @@ function mapTrueLayerTransaction(
 
   const normalised = readString(tl, "normalised_provider_transaction_id")
   const providerId = readString(tl, "provider_transaction_id")
-  if (!normalised && !providerId) return null
+  const normalisedHash = normalised ? hashSensitiveValue(normalised) : null
+  const providerIdHash = providerId ? hashSensitiveValue(providerId) : null
+  if (!normalisedHash && !providerIdHash) return null
 
   const tlTransactionId = readString(tl, "transaction_id")
   const ts = readString(tl, "timestamp")
@@ -116,8 +124,8 @@ function mapTrueLayerTransaction(
     occurred_at: occurredAt,
     note,
     truelayer_transaction_id: tlTransactionId,
-    normalised_provider_transaction_id: normalised,
-    provider_transaction_id: providerId,
+    normalised_provider_transaction_id_hash: normalisedHash,
+    provider_transaction_id_hash: providerIdHash,
   }
 }
 
@@ -173,9 +181,9 @@ async function loadExistingDedupeKeys(
     if (part.length === 0) continue
     const { data, error } = await supabase
       .from("transactions")
-      .select("normalised_provider_transaction_id, provider_transaction_id")
+      .select("normalised_provider_transaction_id_hash, provider_transaction_id_hash")
       .eq("user_id", userId)
-      .in("normalised_provider_transaction_id", part)
+      .in("normalised_provider_transaction_id_hash", part)
 
     if (error) {
       throw new Error(`Failed to check existing transactions: ${error.message}`)
@@ -189,9 +197,9 @@ async function loadExistingDedupeKeys(
     if (part.length === 0) continue
     const { data, error } = await supabase
       .from("transactions")
-      .select("normalised_provider_transaction_id, provider_transaction_id")
+      .select("normalised_provider_transaction_id_hash, provider_transaction_id_hash")
       .eq("user_id", userId)
-      .in("provider_transaction_id", part)
+      .in("provider_transaction_id_hash", part)
 
     if (error) {
       throw new Error(`Failed to check existing transactions: ${error.message}`)
@@ -244,7 +252,7 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
 
   const { data: connections, error: connErr } = await supabase
     .from("bank_connections")
-    .select("*")
+    .select("id, user_id, consent_created_at, expires_at, status, created_at, updated_at")
     .eq("user_id", userId)
     .eq("status", "active")
     .order("created_at", { ascending: true })
@@ -284,7 +292,9 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
     try {
       tlAccounts = await getAccounts(accessToken)
     } catch (e) {
-      console.warn(`[TrueLayer sync] getAccounts failed for ${connection.id}:`, e)
+      console.warn(
+        `[TrueLayer sync] getAccounts failed for ${connection.id}: ${getErrorMessage(e)}`,
+      )
       continue
     }
 
@@ -293,12 +303,13 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
     for (const raw of tlAccounts) {
       const parsed = parseTrueLayerAccount(raw)
       if (!parsed) continue
+      const accountIdHash = hashSensitiveValue(parsed.accountId)
 
       const { data: existingBa, error: baSelErr } = await supabase
         .from("bank_accounts")
         .select("id, account_id")
         .eq("user_id", userId)
-        .eq("truelayer_account_id", parsed.accountId)
+        .eq("truelayer_account_id_hash", accountIdHash)
         .maybeSingle()
 
       if (baSelErr) {
@@ -334,7 +345,7 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
           user_id: userId,
           account_id: internalAccountId,
           bank_connection_id: connection.id,
-          truelayer_account_id: parsed.accountId,
+          truelayer_account_id_hash: accountIdHash,
           name: parsed.displayName,
           institution: parsed.institution,
           currency: parsed.currency,
@@ -352,7 +363,7 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
               .from("bank_accounts")
               .select("account_id")
               .eq("user_id", userId)
-              .eq("truelayer_account_id", parsed.accountId)
+              .eq("truelayer_account_id_hash", accountIdHash)
               .maybeSingle()
             if (reSelErr || !winnerBa?.account_id) {
               console.warn(
@@ -401,8 +412,7 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
         txs = await getTransactions(accessToken, parsed.accountId, { from, to })
       } catch (e) {
         console.warn(
-          `[TrueLayer sync] getTransactions failed for account ${parsed.accountId}:`,
-          e,
+          `[TrueLayer sync] getTransactions failed for account hash ${accountIdHash.slice(0, 12)}: ${getErrorMessage(e)}`,
         )
         continue
       }
@@ -414,10 +424,10 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
         .from("bank_accounts")
         .update({ last_synced_at: nowIso, updated_at: nowIso })
         .eq("user_id", userId)
-        .eq("truelayer_account_id", parsed.accountId)
+        .eq("truelayer_account_id_hash", accountIdHash)
       if (lastSyncErr) {
         console.warn(
-          `[TrueLayer sync] last_synced_at update failed for truelayer_account_id=${parsed.accountId}:`,
+          `[TrueLayer sync] last_synced_at update failed for account hash ${accountIdHash.slice(0, 12)}:`,
           lastSyncErr.message,
         )
       }
@@ -438,8 +448,8 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
     const normalisedIds: string[] = []
     const providerIds: string[] = []
     for (const row of pendingRows) {
-      const n = row.normalised_provider_transaction_id
-      const p = row.provider_transaction_id
+      const n = row.normalised_provider_transaction_id_hash
+      const p = row.provider_transaction_id_hash
       if (typeof n === "string" && n) normalisedIds.push(n)
       if (typeof p === "string" && p) providerIds.push(p)
     }
