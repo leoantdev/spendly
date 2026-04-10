@@ -6,9 +6,13 @@ import { type NextResponse } from "next/server"
 
 import { truelayerConfig } from "@/lib/truelayer/config"
 
-/** Data API read scopes + long-lived refresh (no payments). */
+/**
+ * Data API read scopes + long-lived refresh (no payments).
+ * `cards` = credit cards; `accounts` = bank/debit.
+ * Existing connections keep their original consent until the user reconnects; refresh does not add new scopes.
+ */
 export const TRUELAYER_DATA_SCOPES =
-  "info accounts balance transactions offline_access" as const
+  "info accounts cards balance transactions offline_access" as const
 
 export const TRUELAYER_OAUTH_COOKIE_STATE = "tl_oauth_state"
 export const TRUELAYER_OAUTH_COOKIE_NONCE = "tl_oauth_nonce"

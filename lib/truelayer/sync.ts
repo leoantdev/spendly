@@ -2,11 +2,20 @@ import "server-only"
 
 import { format, subDays } from "date-fns"
 
-import { getAccounts, getTransactions, type TrueLayerTransaction } from "@/lib/truelayer/client"
+import {
+  getAccounts,
+  getCardTransactions,
+  getCards,
+  getTransactions,
+  TrueLayerApiError,
+  type TrueLayerTransaction,
+} from "@/lib/truelayer/client"
 import { hashSensitiveValue } from "@/lib/truelayer/secret-store"
 import { BankConnectionError, ensureBankConnectionAccessToken } from "@/lib/truelayer/tokens"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import type { BankConnection, TransactionType } from "@/lib/types"
+import { selectSyncHint } from "@/lib/truelayer/sync-hint"
+import { mergeLinkedResourcesWithStats } from "@/lib/truelayer/sync-parse"
 import {
   addDedupeKeysForRow,
   isPostgresUniqueViolation,
@@ -14,9 +23,11 @@ import {
   transactionRowIsDuplicate,
 } from "@/lib/truelayer/sync-utils"
 
+/** `accountsSynced` counts bank accounts and credit cards that completed a transaction fetch. */
 export type SyncBankDataStats = {
   accountsSynced: number
   newTransactionsImported: number
+  hint?: string | null
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -45,29 +56,21 @@ function getErrorMessage(error: unknown): string {
   return "Unknown error"
 }
 
-function parseTrueLayerAccount(
-  raw: unknown,
-): {
-  accountId: string
-  displayName: string
-  currency: string
-  institution: string
-} | null {
-  if (!isRecord(raw)) return null
-  const accountId = readString(raw, "account_id")
-  const displayName = readString(raw, "display_name")
-  const currency = readString(raw, "currency")
-  if (!accountId || !displayName || !currency) return null
-
-  let institution = "Bank"
-  const provider = raw.provider
-  if (isRecord(provider)) {
-    const dn = readString(provider, "display_name")
-    const pid = readString(provider, "provider_id")
-    institution = dn ?? pid ?? institution
+function isCardsScopeLikelyDenied(error: unknown): boolean {
+  if (error instanceof TrueLayerApiError) {
+    if (error.status === 403 || error.status === 401) return true
+    const msg = error.message.toLowerCase()
+    if (
+      msg.includes("scope") ||
+      msg.includes("forbidden") ||
+      msg.includes("access denied") ||
+      msg.includes("insufficient") ||
+      msg.includes("not allowed")
+    ) {
+      return true
+    }
   }
-
-  return { accountId, displayName, currency, institution }
+  return false
 }
 
 function parseOccurredAtDate(timestamp: string | null): string | null {
@@ -244,7 +247,7 @@ async function insertTransactionsBatched(
 }
 
 /**
- * Pulls TrueLayer accounts and recent transactions into `bank_accounts` and `transactions`.
+ * Pulls TrueLayer bank accounts, credit cards, and recent transactions into `bank_accounts` and `transactions`.
  * Call only from authenticated server code (same request as the user's session).
  */
 export async function syncBankDataForUser(userId: string): Promise<SyncBankDataStats> {
@@ -273,6 +276,13 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
 
   let accountsSynced = 0
   let newTransactionsImported = 0
+  let tokenSkips = 0
+  let connectionsFetched = 0
+  let bothEndpointsFailedConnections = 0
+  let emptyListConnections = 0
+  let parseDropConnections = 0
+  let cardsLikelyScopeDeniedConnections = 0
+  let hadMergedResources = false
 
   for (const connection of list) {
     let accessToken: string
@@ -280,6 +290,7 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
       accessToken = await ensureBankConnectionAccessToken(connection)
     } catch (e) {
       if (e instanceof BankConnectionError) {
+        tokenSkips += 1
         console.warn(
           `[TrueLayer sync] Skipping connection ${connection.id}: ${e.message}`,
         )
@@ -288,21 +299,64 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
       throw e
     }
 
-    let tlAccounts: Awaited<ReturnType<typeof getAccounts>>
+    connectionsFetched += 1
+
+    let accountsErr = false
+    let tlAccounts: Awaited<ReturnType<typeof getAccounts>> = []
     try {
       tlAccounts = await getAccounts(accessToken)
     } catch (e) {
+      accountsErr = true
       console.warn(
         `[TrueLayer sync] getAccounts failed for ${connection.id}: ${getErrorMessage(e)}`,
+      )
+    }
+
+    let cardsErr = false
+    let cardsCaught: unknown
+    let tlCards: Awaited<ReturnType<typeof getCards>> = []
+    try {
+      tlCards = await getCards(accessToken)
+    } catch (e) {
+      cardsErr = true
+      cardsCaught = e
+      console.warn(
+        `[TrueLayer sync] getCards failed for ${connection.id}: ${getErrorMessage(e)}`,
+      )
+    }
+
+    if (cardsErr && isCardsScopeLikelyDenied(cardsCaught)) {
+      cardsLikelyScopeDeniedConnections += 1
+    }
+
+    if (accountsErr && cardsErr) {
+      bothEndpointsFailedConnections += 1
+    }
+
+    const { merged } = mergeLinkedResourcesWithStats(tlAccounts, tlCards)
+    const rawTotal = tlAccounts.length + tlCards.length
+    const bothListCallsSucceeded = !accountsErr && !cardsErr
+
+    if (bothListCallsSucceeded && rawTotal === 0) {
+      emptyListConnections += 1
+    } else if (bothListCallsSucceeded && rawTotal > 0 && merged.size === 0) {
+      parseDropConnections += 1
+    }
+
+    if (merged.size > 0) {
+      hadMergedResources = true
+    }
+
+    if (merged.size === 0) {
+      console.warn(
+        `[TrueLayer sync] No parseable accounts or cards for connection ${connection.id}`,
       )
       continue
     }
 
     const pendingRows: Record<string, unknown>[] = []
 
-    for (const raw of tlAccounts) {
-      const parsed = parseTrueLayerAccount(raw)
-      if (!parsed) continue
+    for (const parsed of merged.values()) {
       const accountIdHash = hashSensitiveValue(parsed.accountId)
 
       const { data: existingBa, error: baSelErr } = await supabase
@@ -323,7 +377,8 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
       let internalAccountId: string | null = existingBa?.account_id ?? null
 
       if (!internalAccountId) {
-        const accountName = `${parsed.displayName} (${parsed.institution})`
+        const suffix = parsed.kind === "card" ? " · Card" : ""
+        const accountName = `${parsed.displayName} (${parsed.institution})${suffix}`
         const { data: newAcc, error: accErr } = await supabase
           .from("accounts")
           .insert({ user_id: userId, name: accountName })
@@ -409,10 +464,17 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
 
       let txs: TrueLayerTransaction[]
       try {
-        txs = await getTransactions(accessToken, parsed.accountId, { from, to })
+        txs =
+          parsed.kind === "card"
+            ? await getCardTransactions(accessToken, parsed.accountId, {
+                from,
+                to,
+              })
+            : await getTransactions(accessToken, parsed.accountId, { from, to })
       } catch (e) {
+        const label = parsed.kind === "card" ? "card" : "account"
         console.warn(
-          `[TrueLayer sync] getTransactions failed for account hash ${accountIdHash.slice(0, 12)}: ${getErrorMessage(e)}`,
+          `[TrueLayer sync] transaction fetch failed for ${label} hash ${accountIdHash.slice(0, 12)}: ${getErrorMessage(e)}`,
         )
         continue
       }
@@ -476,5 +538,22 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
     newTransactionsImported += n
   }
 
-  return { accountsSynced, newTransactionsImported }
+  const hint = selectSyncHint({
+    connectionCount: list.length,
+    accountsSynced,
+    newTransactionsImported,
+    tokenSkips,
+    connectionsFetched,
+    bothEndpointsFailedConnections,
+    emptyListConnections,
+    parseDropConnections,
+    cardsLikelyScopeDeniedConnections,
+    hadMergedResources,
+  })
+
+  return {
+    accountsSynced,
+    newTransactionsImported,
+    ...(hint !== undefined ? { hint } : {}),
+  }
 }

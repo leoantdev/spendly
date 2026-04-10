@@ -3,10 +3,20 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { format } from "date-fns"
-import { Building2Icon, RefreshCwIcon } from "lucide-react"
+import { Building2Icon, RefreshCwIcon, UnlinkIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import type { BankConnectionVm } from "@/components/banks/types"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,6 +35,7 @@ let lastBankCallbackHandled: { status: string; at: number } | null = null
 type SyncStats = {
   accountsSynced: number
   newTransactionsImported: number
+  hint?: string | null
 }
 
 function isSyncStats(value: unknown): value is SyncStats {
@@ -32,11 +43,14 @@ function isSyncStats(value: unknown): value is SyncStats {
   const o = value as Record<string, unknown>
   const a = o.accountsSynced
   const n = o.newTransactionsImported
+  const hintOk =
+    o.hint === undefined || o.hint === null || typeof o.hint === "string"
   return (
     typeof a === "number" &&
     Number.isFinite(a) &&
     typeof n === "number" &&
-    Number.isFinite(n)
+    Number.isFinite(n) &&
+    hintOk
   )
 }
 
@@ -75,6 +89,102 @@ function statusLabel(status: BankConnectionVm["status"]): string {
     default:
       return status
   }
+}
+
+function BankConnectionDisconnect({
+  connectionId,
+  institutionLabel,
+}: {
+  connectionId: string
+  institutionLabel: string
+}) {
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [pending, setPending] = useState(false)
+
+  async function confirmDisconnect() {
+    setPending(true)
+    try {
+      const res = await fetch("/api/truelayer/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionId }),
+      })
+      const body = (await res.json().catch(() => null)) as
+        | { removed?: boolean; error?: string }
+        | null
+
+      if (!res.ok) {
+        toast.error(
+          body && typeof body.error === "string" && body.error
+            ? body.error
+            : "Could not disconnect.",
+        )
+        return
+      }
+
+      const alreadyGone = body?.removed === false
+      if (alreadyGone) {
+        toast.message("Already disconnected", {
+          description:
+            "This bank link was already removed. Imported history in Spendly is unchanged.",
+        })
+      } else {
+        toast.success("Bank disconnected", {
+          description:
+            "Spendly will stop syncing this bank. Your imported transactions and accounts stay in the app.",
+        })
+      }
+      setOpen(false)
+      router.refresh()
+    } catch {
+      toast.error("Could not disconnect. Try again.")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="shrink-0"
+        onClick={() => setOpen(true)}
+      >
+        <UnlinkIcon className="size-4" data-icon="inline-start" />
+        Disconnect
+      </Button>
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Disconnect “{institutionLabel}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Spendly will remove this bank link and stop syncing. Accounts and
+              transactions you already imported stay in the app. You can connect
+              this bank again later if you want.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={pending}
+              onClick={(e) => {
+                e.preventDefault()
+                void confirmDisconnect()
+              }}
+            >
+              {pending ? "Disconnecting…" : "Disconnect"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
 }
 
 export function BanksPageClient({
@@ -190,14 +300,28 @@ export function BanksPageClient({
       }
 
       if (!isSyncStats(body)) {
-        toast.success("Sync complete")
+        toast.success("Sync finished", {
+          description:
+            "The server response was unexpected. Refresh the page or try Sync now again if accounts look out of date.",
+        })
         router.refresh()
         return
       }
 
-      toast.success("Sync complete", {
-        description: `${body.accountsSynced} account(s) checked, ${body.newTransactionsImported} new transaction(s) imported.`,
-      })
+      const resourceLabel =
+        body.accountsSynced === 1
+          ? "1 linked account or card checked"
+          : `${body.accountsSynced} linked accounts or cards checked`
+      const txLabel =
+        body.newTransactionsImported === 1
+          ? "1 new transaction imported"
+          : `${body.newTransactionsImported} new transactions imported`
+      const description =
+        typeof body.hint === "string" && body.hint.trim()
+          ? `${resourceLabel}, ${txLabel}. ${body.hint}`
+          : `${resourceLabel}, ${txLabel}.`
+
+      toast.success("Sync complete", { description })
       router.refresh()
     } catch {
       toast.error("Sync failed. Please try again.")
@@ -213,7 +337,9 @@ export function BanksPageClient({
           <CardTitle className="text-base">Bank feeds</CardTitle>
           <CardDescription>
             Link your bank to import transactions for viewing and budgeting in
-            Spendly. Read-only access—this app cannot move money.
+            Spendly. Read-only access—this app cannot move money. If you linked
+            before card support was added, reconnect once so credit cards can be
+            requested.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -299,15 +425,26 @@ export function BanksPageClient({
                       Last synced: {formatSyncedAt(conn.lastSyncedAt)}
                     </CardDescription>
                   </div>
-                  <Badge variant={statusBadgeVariant(conn.status)}>
-                    {statusLabel(conn.status)}
-                  </Badge>
+                  <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+                    <BankConnectionDisconnect
+                      connectionId={conn.id}
+                      institutionLabel={conn.institutionLabel}
+                    />
+                    <Badge
+                      variant={statusBadgeVariant(conn.status)}
+                      className="self-end sm:self-center"
+                    >
+                      {statusLabel(conn.status)}
+                    </Badge>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="pt-4">
                 {conn.accounts.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    Accounts will appear after the first sync.
+                    Accounts and cards show up after a successful sync. If nothing
+                    appears, use Sync now and read any message in the toast—older
+                    connections may need reconnecting for card access.
                   </p>
                 ) : (
                   <ul className="flex flex-col gap-3" aria-label="Accounts">

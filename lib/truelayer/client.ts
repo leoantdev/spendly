@@ -14,6 +14,9 @@ export type TrueLayerTokenResponse = {
 /** Account object shape from Data API `results` (fields vary by provider). */
 export type TrueLayerAccount = Record<string, unknown>
 
+/** Card object shape from Data API `GET /cards` `results` (see card data requests docs). */
+export type TrueLayerCard = Record<string, unknown>
+
 /** Transaction object shape from Data API `results`. */
 export type TrueLayerTransaction = Record<string, unknown>
 
@@ -249,6 +252,25 @@ export async function getAccounts(accessToken: string): Promise<TrueLayerAccount
 }
 
 /**
+ * List credit cards for the connection behind `accessToken`.
+ * @see https://docs.truelayer.com/reference/getcards
+ */
+export async function getCards(accessToken: string): Promise<TrueLayerCard[]> {
+  const data = await getDataJson<DataListResponse<TrueLayerCard>>(
+    "/cards",
+    accessToken,
+  )
+  if (!Array.isArray(data.results)) {
+    throw new TrueLayerApiError(
+      "Cards response missing results array",
+      200,
+      data,
+    )
+  }
+  return data.results
+}
+
+/**
  * Connection metadata for the current access token (consent, credentials id).
  * @see https://docs.truelayer.com/reference/getme
  */
@@ -286,6 +308,34 @@ export async function getTransactions(
   if (!Array.isArray(data.results)) {
     throw new TrueLayerApiError(
       "Transactions response missing results array",
+      200,
+      data,
+    )
+  }
+  return data.results
+}
+
+/**
+ * List settled transactions for a credit card (`account_id` in card payload).
+ * @see https://docs.truelayer.com/reference/getcardtransactions
+ */
+export async function getCardTransactions(
+  accessToken: string,
+  cardAccountId: string,
+  range?: { from?: string; to?: string },
+): Promise<TrueLayerTransaction[]> {
+  const encodedId = encodeURIComponent(cardAccountId)
+  const data = await getDataJson<DataListResponse<TrueLayerTransaction>>(
+    `/cards/${encodedId}/transactions`,
+    accessToken,
+    {
+      from: range?.from,
+      to: range?.to,
+    },
+  )
+  if (!Array.isArray(data.results)) {
+    throw new TrueLayerApiError(
+      "Card transactions response missing results array",
       200,
       data,
     )
