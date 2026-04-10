@@ -10,7 +10,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/transactions") ||
     pathname.startsWith("/budgets") ||
-    pathname.startsWith("/settings")
+    pathname.startsWith("/settings") ||
+    pathname.startsWith("/banks")
 
   const isAuthPage = pathname === "/login" || pathname === "/signup"
 

@@ -61,8 +61,8 @@ function clearCookieOptions(): {
 
 export function getTrueLayerAuthAuthorizeUrl(): string {
   return truelayerConfig.mode === "sandbox"
-    ? "https://auth.truelayer-sandbox.com/connect/authorize"
-    : "https://auth.truelayer.com/connect/authorize"
+    ? "https://auth.truelayer-sandbox.com/"
+    : "https://auth.truelayer.com/"
 }
 
 function base64Url(buf: Buffer): string {
@@ -110,7 +110,7 @@ export function appendBankConnectionStatus(
   origin: string,
   status: BankConnectionRedirectStatus,
 ): URL {
-  const url = new URL("/settings", origin)
+  const url = new URL("/banks", origin)
   url.searchParams.set("bankConnection", status)
   return url
 }

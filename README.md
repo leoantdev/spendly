@@ -12,11 +12,28 @@ Mobile-first PWA for quick expense and income tracking. Built with **Next.js (Ap
    For **TrueLayer Data API** (bank connection and reading accounts/transactions only — this app does **not** use TrueLayer Payments):
 
    - `TRUELAYER_CLIENT_ID` / `TRUELAYER_CLIENT_SECRET` — from TrueLayer Console
-   - `TRUELAYER_REDIRECT_URI` — your OAuth redirect URL (must match Console)
+   - `TRUELAYER_REDIRECT_URI` — OAuth callback URL; must **exactly** match a URI allowlisted in TrueLayer Console (same scheme, host, path; no trailing slash unless registered). For local dev use `http://localhost:3000/api/truelayer/callback` and add that URI in Console; production uses your deployed origin + `/api/truelayer/callback`. Console changes can take up to ~15 minutes to apply.
    - `TRUELAYER_BASE_URL` — Data API v1 base: `https://api.truelayer.com/data/v1` (live) or `https://api.truelayer-sandbox.com/data/v1` (sandbox)
    - `TRUELAYER_MODE` — `live` or `sandbox` (must match the environment toggle in TrueLayer Console and your base URL)
 
    Server code reads these via [`lib/truelayer/config.ts`](lib/truelayer/config.ts) (`import "server-only"`); do not prefix with `NEXT_PUBLIC_`.
+
+   **TrueLayer Console checklist** (fixes most `Invalid client_id` issues):
+
+   1. In TrueLayer Console, note whether you are in **sandbox** or **live** for this app.
+   2. Copy `client_id` and `client_secret` from **that same** environment only.
+   3. Set `TRUELAYER_MODE` and `TRUELAYER_BASE_URL` to the matching pair:
+      - Sandbox: `TRUELAYER_MODE=sandbox` and `TRUELAYER_BASE_URL=https://api.truelayer-sandbox.com/data/v1` (sandbox `client_id` values start with `sandbox-`).
+      - Live: `TRUELAYER_MODE=live` and `TRUELAYER_BASE_URL=https://api.truelayer.com/data/v1` (live `client_id` does **not** use the `sandbox-` prefix).
+   4. Allowlist `TRUELAYER_REDIRECT_URI` exactly in Console (scheme, host, path; trailing slash only if registered).
+
+   On `npm run dev`, `POST /api/truelayer/start` logs `TRUELAYER_MODE`, authorize host, and a **redacted** `client_id` fingerprint to help verify the pairing. The same response includes a `diagnostics` object (dev only): check **`authorizeHost`** (`auth.truelayer.com` for live, `auth.truelayer-sandbox.com` for sandbox) and that **`originMatchesRedirectHost`** is true (otherwise register both `localhost` and `127.0.0.1` callback URLs, or use one consistently).
+
+   **If TrueLayer shows “Invalid client_id”** (or redirects to `login.truelayer.com/error`): that screen is used for several failures, not only a bad client id. In practice, fix these in order:
+
+   1. **Redirect URI** — In TrueLayer Console, allowlist **`TRUELAYER_REDIRECT_URI` exactly** (scheme, host, port, path). A typo or using `127.0.0.1` while the env has `localhost` (or the reverse) triggers the same error flow as an unknown client.
+   2. **Environment** — Live credentials require `TRUELAYER_MODE=live` and `authorizeHost` `auth.truelayer.com`. Sandbox credentials use `sandbox-…` client ids and `auth.truelayer-sandbox.com`.
+   3. **Credentials** — Re-copy `client_id` / `client_secret` from the same app in Console as the environment you configured.
 
 2. Apply the database schema (see [`supabase/migrations/20260406200000_spendly_mvp.sql`](supabase/migrations/20260406200000_spendly_mvp.sql)) in the Supabase SQL editor, or use the Supabase CLI.
 

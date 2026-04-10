@@ -130,37 +130,13 @@ export async function GET(request: NextRequest) {
     updated_at: nowIso,
   }
 
-  const { data: existing, error: selectError } = await supabase
-    .from("bank_connections")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("truelayer_user_id", credentialsId)
-    .maybeSingle()
+  const { error: upsertError } = await supabase.from("bank_connections").upsert(payload, {
+    onConflict: "user_id,truelayer_user_id",
+  })
 
-  if (selectError) {
-    console.warn("[TrueLayer callback] Select bank_connections failed:", selectError)
+  if (upsertError) {
+    console.warn("[TrueLayer callback] Upsert bank_connections failed:", upsertError)
     return redirectWithBankStatus(origin, "failed")
-  }
-
-  if (existing?.id) {
-    const { error: updateError } = await supabase
-      .from("bank_connections")
-      .update(payload)
-      .eq("id", existing.id)
-
-    if (updateError) {
-      console.warn("[TrueLayer callback] Update bank_connections failed:", updateError)
-      return redirectWithBankStatus(origin, "failed")
-    }
-  } else {
-    const { error: insertError } = await supabase
-      .from("bank_connections")
-      .insert(payload)
-
-    if (insertError) {
-      console.warn("[TrueLayer callback] Insert bank_connections failed:", insertError)
-      return redirectWithBankStatus(origin, "failed")
-    }
   }
 
   return redirectWithBankStatus(origin, "success")

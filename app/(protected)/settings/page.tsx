@@ -1,3 +1,6 @@
+import Link from "next/link"
+import { Building2Icon, ChevronRightIcon } from "lucide-react"
+
 import { logoutAction } from "@/app/actions/auth"
 import { CategoryManager } from "@/components/categories/category-manager"
 import { ProfileForm } from "@/components/settings/profile-form"
@@ -24,6 +27,28 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <ProfileForm profile={profile} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Bank feeds</CardTitle>
+          <CardDescription>
+            Link your bank, sync accounts, and import transactions.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" className="min-h-11 w-full justify-between" asChild>
+            <Link href="/banks">
+              <Building2Icon data-icon="inline-start" aria-hidden />
+              Manage bank connections
+              <ChevronRightIcon
+                className="text-muted-foreground"
+                data-icon="inline-end"
+                aria-hidden
+              />
+            </Link>
+          </Button>
         </CardContent>
       </Card>
 

@@ -16,6 +16,7 @@ export async function POST() {
 
   try {
     const stats = await syncBankDataForUser(user.id)
+    revalidatePath("/banks")
     if (stats.newTransactionsImported > 0 || stats.accountsSynced > 0) {
       revalidatePath("/transactions")
       revalidatePath("/dashboard")
