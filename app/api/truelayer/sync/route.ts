@@ -15,7 +15,10 @@ export async function POST() {
   }
 
   try {
-    const stats = await syncBankDataForUser(user.id)
+    const stats = await syncBankDataForUser(user.id, {
+      supabase,
+      source: "manual",
+    })
     revalidatePath("/banks")
     if (stats.newTransactionsImported > 0 || stats.accountsSynced > 0) {
       revalidatePath("/transactions")

@@ -1,6 +1,7 @@
 import "server-only"
 
 import { format, subDays } from "date-fns"
+import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
   getAccounts,
@@ -14,6 +15,7 @@ import { hashSensitiveValue } from "@/lib/truelayer/secret-store"
 import { BankConnectionError, ensureBankConnectionAccessToken } from "@/lib/truelayer/tokens"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import type { BankConnection, TransactionType } from "@/lib/types"
+import { classifySyncRunOutcome, type SyncRunOutcome } from "@/lib/truelayer/sync-outcome"
 import { selectSyncHint } from "@/lib/truelayer/sync-hint"
 import { mergeLinkedResourcesWithStats } from "@/lib/truelayer/sync-parse"
 import {
@@ -23,12 +25,33 @@ import {
   transactionRowIsDuplicate,
 } from "@/lib/truelayer/sync-utils"
 
+export type { SyncRunOutcome } from "@/lib/truelayer/sync-outcome"
+
 /** `accountsSynced` counts bank accounts and credit cards that completed a transaction fetch. */
 export type SyncBankDataStats = {
   accountsSynced: number
   newTransactionsImported: number
   hint?: string | null
+  /** Set from connection/token/hint metrics; use for cron scheduling, not manual UI. */
+  outcome: SyncRunOutcome
 }
+
+/** Who triggered the sync (manual UI vs Vercel cron). Used for logging only. */
+export type SyncBankDataSource = "manual" | "cron"
+
+export type SyncBankDataForUserOptions = {
+  /** Session-scoped client (manual) or service-role client (cron). Defaults to cookie session client. */
+  supabase?: SupabaseClient
+  /** Inclusive start date `YYYY-MM-DD` for transaction fetches. Defaults to 90 days ago (manual UX). */
+  from?: string
+  /** Inclusive end date `YYYY-MM-DD`. Defaults to today. */
+  to?: string
+  source?: SyncBankDataSource
+  /** Correlates logs when `source` is `cron`. */
+  runId?: string
+}
+
+type SyncSupabase = SupabaseClient
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v)
@@ -133,7 +156,7 @@ function mapTrueLayerTransaction(
 }
 
 async function loadUncategorisedCategoryIds(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  supabase: SyncSupabase,
   userId: string,
 ): Promise<{ expense: string; income: string }> {
   const { data, error } = await supabase
@@ -164,7 +187,7 @@ async function loadUncategorisedCategoryIds(
 }
 
 async function loadExistingDedupeKeys(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  supabase: SyncSupabase,
   userId: string,
   normalisedIds: string[],
   providerIds: string[],
@@ -216,7 +239,7 @@ async function loadExistingDedupeKeys(
 }
 
 async function insertTransactionsBatched(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  supabase: SyncSupabase,
   rows: Record<string, unknown>[],
 ): Promise<number> {
   const BATCH = 100
@@ -246,12 +269,51 @@ async function insertTransactionsBatched(
   return inserted
 }
 
+function syncLog(
+  source: SyncBankDataSource | undefined,
+  runId: string | undefined,
+  message: string,
+  extra?: Record<string, unknown>,
+) {
+  const base = source === "cron" ? "[TrueLayer sync][cron]" : "[TrueLayer sync]"
+  if (source === "cron" && runId) {
+    console.info(
+      JSON.stringify({
+        msg: message,
+        source: "cron",
+        runId,
+        ...extra,
+      }),
+    )
+    return
+  }
+  if (extra && Object.keys(extra).length > 0) {
+    console.info(base, message, extra)
+    return
+  }
+  console.info(base, message)
+}
+
 /**
  * Pulls TrueLayer bank accounts, credit cards, and recent transactions into `bank_accounts` and `transactions`.
- * Call only from authenticated server code (same request as the user's session).
+ * Use `options.supabase` from a cookie session (manual) or service role (cron); default is the current request session.
  */
-export async function syncBankDataForUser(userId: string): Promise<SyncBankDataStats> {
-  const supabase = await createServerSupabaseClient()
+export async function syncBankDataForUser(
+  userId: string,
+  options?: SyncBankDataForUserOptions,
+): Promise<SyncBankDataStats> {
+  const supabase = options?.supabase ?? (await createServerSupabaseClient())
+  const source = options?.source ?? "manual"
+  const runId = options?.runId
+
+  const to = options?.to ?? format(new Date(), "yyyy-MM-dd")
+  const from =
+    options?.from ??
+    format(subDays(new Date(), 90), "yyyy-MM-dd")
+
+  if (source === "cron") {
+    syncLog(source, runId, "sync_start", { userId, from, to })
+  }
 
   const { data: connections, error: connErr } = await supabase
     .from("bank_connections")
@@ -266,13 +328,17 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
 
   const list = (connections ?? []) as BankConnection[]
   if (list.length === 0) {
-    return { accountsSynced: 0, newTransactionsImported: 0 }
+    if (source === "cron") {
+      syncLog(source, runId, "sync_no_connections", { userId })
+    }
+    return {
+      accountsSynced: 0,
+      newTransactionsImported: 0,
+      outcome: "success",
+    }
   }
 
   const cats = await loadUncategorisedCategoryIds(supabase, userId)
-
-  const to = format(new Date(), "yyyy-MM-dd")
-  const from = format(subDays(new Date(), 90), "yyyy-MM-dd")
 
   let accountsSynced = 0
   let newTransactionsImported = 0
@@ -551,9 +617,23 @@ export async function syncBankDataForUser(userId: string): Promise<SyncBankDataS
     hadMergedResources,
   })
 
-  return {
+  const outcome = classifySyncRunOutcome(list.length, tokenSkips, hint)
+
+  const stats: SyncBankDataStats = {
     accountsSynced,
     newTransactionsImported,
+    outcome,
     ...(hint !== undefined ? { hint } : {}),
   }
+
+  if (source === "cron") {
+    syncLog(source, runId, "sync_done", {
+      userId,
+      accountsSynced,
+      newTransactionsImported,
+      ...(hint !== undefined ? { hint } : {}),
+    })
+  }
+
+  return stats
 }

@@ -111,6 +111,15 @@ export async function ensureBankConnectionAccessToken(
       )
     }
 
+    // Transient throttling: do not mark the connection as error (would alarm users / block retries).
+    if (e instanceof TrueLayerApiError && e.status === 429) {
+      throw new BankConnectionError(
+        e.message || "TrueLayer rate limited token refresh. Try again later.",
+        "refresh_failed",
+        e,
+      )
+    }
+
     await updateBankConnectionStatus(connection.user_id, connection.id, "error")
 
     const msg =

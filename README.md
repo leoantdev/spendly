@@ -47,6 +47,24 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Scheduled TrueLayer sync (Vercel Cron)
+
+Optional background import of bank transactions uses **Vercel Cron** → `GET /api/truelayer/cron-sync` (see [`vercel.json`](vercel.json)).
+
+1. Apply the migration that creates `public.bank_sync_state` and `claim_bank_sync_user` ([`supabase/migrations/20260411120000_bank_sync_state.sql`](supabase/migrations/20260411120000_bank_sync_state.sql)).
+2. Set **`CRON_SECRET`** in Vercel project environment variables (Vercel recommends **at least 16 characters**). With `CRON_SECRET` defined, Vercel sends `Authorization: Bearer <CRON_SECRET>` when invoking cron routes.
+3. Deploy; cron schedule is defined in `vercel.json` (default: every 30 minutes). Adjust `schedule` or batching env vars as needed.
+
+**Vercel plan:** On **Hobby**, cron frequency is limited (typically **once per day**); schedules like every 30 minutes may **fail at deploy** or be downgraded. Use a **daily** `schedule` in `vercel.json` on Hobby, or upgrade to **Pro** (or another tier that allows your desired cadence) for frequent syncs. See [Vercel Cron usage and pricing](https://vercel.com/docs/cron-jobs/usage-and-pricing).
+
+**Local manual test** (after `CRON_SECRET` is in `.env.local`):
+
+```bash
+curl -sS -H "Authorization: Bearer $CRON_SECRET" "http://localhost:3000/api/truelayer/cron-sync"
+```
+
+Sync state, leases, and `last_error` are stored in `bank_sync_state` for observability and backoff.
+
 ## Scripts
 
 - `npm run dev` — development server (Turbopack)
