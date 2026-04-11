@@ -226,7 +226,8 @@ export function CategoryRulesManager({
           <h2 className="text-base font-semibold">Auto-categorise rules</h2>
           <p className="text-sm text-muted-foreground">
             Match imported merchant names. Rules also learn when you move a
-            transaction out of Uncategorised.
+            transaction out of Uncategorised. AI auto-categorisation can add
+            &quot;AI&quot; rules when enabled.
           </p>
         </div>
         {categories.length > 0 ? (
@@ -263,8 +264,20 @@ export function CategoryRulesManager({
                     </span>
                     <span className="font-medium">{r.category.name}</span>
                   </span>
-                  <Badge variant={r.source === "learned" ? "secondary" : "outline"}>
-                    {r.source === "learned" ? "Learned" : "Manual"}
+                  <Badge
+                    variant={
+                      r.source === "learned"
+                        ? "secondary"
+                        : r.source === "ai"
+                          ? "default"
+                          : "outline"
+                    }
+                  >
+                    {r.source === "learned"
+                      ? "Learned"
+                      : r.source === "ai"
+                        ? "AI"
+                        : "Manual"}
                   </Badge>
                 </div>
               </div>

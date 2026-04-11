@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 
-import { categoryRuleSchema } from "@/lib/validators"
+import { categoryRuleSchema, categoryRuleSourceSchema } from "@/lib/validators"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 
 export type CategoryRuleActionResult = { error?: string; success?: boolean }
@@ -41,7 +41,7 @@ export async function createCategoryRuleAction(
     category_id: parsed.data.categoryId,
     merchant_pattern: parsed.data.merchantPattern,
     match_type: parsed.data.matchType,
-    source: "manual",
+    source: categoryRuleSourceSchema.parse("manual"),
   })
   if (error) {
     if (error.code === "23505") {

@@ -46,6 +46,9 @@ export const budgetUpsertSchema = z.object({
   amount: z.coerce.number().min(0),
 })
 
+/** Valid `category_rules.source` values (DB CHECK constraint). */
+export const categoryRuleSourceSchema = z.enum(["learned", "manual", "ai"])
+
 export const categoryRuleSchema = z.object({
   merchantPattern: z.string().min(1).max(200).transform((s) => s.trim()),
   matchType: z.enum(["exact", "contains"]),

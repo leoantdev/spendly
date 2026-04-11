@@ -54,7 +54,7 @@ export type Account = {
 
 export type CategoryRuleMatchType = "exact" | "contains"
 
-export type CategoryRuleSource = "learned" | "manual"
+export type CategoryRuleSource = "learned" | "manual" | "ai"
 
 export type CategoryRule = {
   id: string

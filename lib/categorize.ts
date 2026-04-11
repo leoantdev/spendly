@@ -3,11 +3,25 @@ import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
+  aiCategorizeTransactions,
+  getAiCategorizeMaxTransactionsPerRun,
+  isAiCategorizationEnabled,
+  shouldIncludeTransactionNotesInAi,
+  type AiCategorizeCategoryInput,
+  type AiCategorizeTxInput,
+} from "@/lib/ai-categorize"
+import {
+  pickDominantCategoryPerMerchantNorm,
+  representativeMerchantPatternPerNorm,
+} from "@/lib/categorize-ai-helpers"
+import {
   UNCATEGORISED_EXPENSE_KEY,
   UNCATEGORISED_INCOME_KEY,
+  isUncategorisedSystemKey,
 } from "@/lib/category-system"
 import { unwrapSupabaseJoin } from "@/lib/postgrest-join"
-import type { CategoryRuleMatchType, TransactionType } from "@/lib/types"
+import type { CategoryRuleMatchType, CategoryRuleSource, TransactionType } from "@/lib/types"
+import { categoryRuleSourceSchema } from "@/lib/validators"
 
 type CategorizeSupabase = SupabaseClient
 
@@ -112,20 +126,29 @@ export async function categorizeTransactions(
 
   /** PostgREST default max rows per request; paginate to avoid silent truncation. */
   const PAGE = 1000
+  const includeNotesInAi = shouldIncludeTransactionNotesInAi()
+
   type UncatTxRow = {
     id: unknown
     merchant_name: unknown
     type: unknown
     category_id: unknown
+    note?: unknown
   }
   const rows: UncatTxRow[] = []
   for (let from = 0; ; from += PAGE) {
     const to = from + PAGE - 1
-    let q = supabase
-      .from("transactions")
-      .select("id, merchant_name, type, category_id")
-      .eq("user_id", userId)
-      .in("category_id", [uncategorised.expense, uncategorised.income])
+    let q = includeNotesInAi
+      ? supabase
+          .from("transactions")
+          .select("id, merchant_name, type, category_id, note")
+          .eq("user_id", userId)
+          .in("category_id", [uncategorised.expense, uncategorised.income])
+      : supabase
+          .from("transactions")
+          .select("id, merchant_name, type, category_id")
+          .eq("user_id", userId)
+          .in("category_id", [uncategorised.expense, uncategorised.income])
     if (transactionIds !== undefined && transactionIds.length > 0) {
       q = q.in("id", transactionIds)
     }
@@ -190,6 +213,159 @@ export async function categorizeTransactions(
     categorized += ids.length
   }
 
+  const matchedIds = new Set<string>()
+  for (const ids of updates.values()) {
+    for (const id of ids) matchedIds.add(id)
+  }
+
+  if (!isAiCategorizationEnabled()) {
+    return { categorized, total }
+  }
+
+  /** Any existing rule row blocks AI for that merchant pattern (upsert would no-op; saves tokens). */
+  const existingMerchantNorms = new Set(
+    validRules.map((r) => r.merchant_pattern.trim().toLowerCase()).filter(Boolean),
+  )
+
+  type EligibleAiTx = {
+    id: string
+    merchant_name: string
+    type: TransactionType
+    note: string | null
+  }
+
+  const eligibleForAi: EligibleAiTx[] = []
+  for (const tx of rows) {
+    if (typeof tx.id !== "string") continue
+    const rawM = tx.merchant_name
+    if (typeof rawM !== "string" || !rawM.trim()) continue
+    if (matchedIds.has(tx.id)) continue
+    const txType = tx.type
+    if (txType !== "income" && txType !== "expense") continue
+    const norm = rawM.trim().toLowerCase()
+    if (existingMerchantNorms.has(norm)) continue
+    const noteRaw = includeNotesInAi ? tx.note : undefined
+    eligibleForAi.push({
+      id: tx.id,
+      merchant_name: rawM.trim(),
+      type: txType,
+      note:
+        includeNotesInAi && typeof noteRaw === "string" && noteRaw.trim()
+          ? noteRaw
+          : null,
+    })
+  }
+
+  if (eligibleForAi.length === 0) {
+    return { categorized, total }
+  }
+
+  try {
+    const { data: catRows, error: catErr } = await supabase
+      .from("categories")
+      .select("id, name, type, system_key")
+      .eq("user_id", userId)
+
+    if (catErr) {
+      throw new Error(`Failed to load categories for AI categorisation: ${catErr.message}`)
+    }
+
+    const assignable: AiCategorizeCategoryInput[] = []
+    for (const c of catRows ?? []) {
+      if (typeof c.id !== "string" || typeof c.name !== "string") continue
+      const t = c.type
+      if (t !== "income" && t !== "expense") continue
+      if (isUncategorisedSystemKey(c.system_key)) continue
+      assignable.push({ id: c.id, name: c.name, type: t })
+    }
+
+    if (assignable.length === 0) {
+      return { categorized, total }
+    }
+
+    const maxAi = getAiCategorizeMaxTransactionsPerRun()
+    const cappedEligible =
+      maxAi === Number.POSITIVE_INFINITY
+        ? eligibleForAi
+        : eligibleForAi.slice(0, Math.max(0, Math.floor(maxAi)))
+
+    const aiTxInputs: AiCategorizeTxInput[] = cappedEligible.map((t) => ({
+      id: t.id,
+      merchant_name: t.merchant_name,
+      type: t.type,
+      note: t.note,
+    }))
+    const rowById = new Map(cappedEligible.map((t) => [t.id, t]))
+
+    const aiAssignments = await aiCategorizeTransactions(aiTxInputs, assignable)
+
+    const aiUpdates = new Map<string, string[]>()
+    for (const [txId, categoryId] of aiAssignments) {
+      const list = aiUpdates.get(categoryId) ?? []
+      list.push(txId)
+      aiUpdates.set(categoryId, list)
+    }
+
+    for (const [categoryId, ids] of aiUpdates) {
+      if (ids.length === 0) continue
+      const { error } = await supabase
+        .from("transactions")
+        .update({ category_id: categoryId })
+        .eq("user_id", userId)
+        .in("id", ids)
+      if (error) {
+        throw new Error(`Failed to apply AI categorisation: ${error.message}`)
+      }
+      categorized += ids.length
+    }
+
+    const dominanceEntries: Array<{ merchantNorm: string; categoryId: string }> = []
+    const patternEntries: Array<{ merchantNorm: string; merchantPattern: string }> = []
+    for (const [txId, categoryId] of aiAssignments) {
+      const row = rowById.get(txId)
+      if (!row) continue
+      const norm = row.merchant_name.trim().toLowerCase()
+      dominanceEntries.push({ merchantNorm: norm, categoryId })
+      patternEntries.push({ merchantNorm: norm, merchantPattern: row.merchant_name.trim() })
+    }
+
+    const dominantByNorm = pickDominantCategoryPerMerchantNorm(dominanceEntries)
+    const patternByNorm = representativeMerchantPatternPerNorm(patternEntries)
+
+    const ruleRows: Array<{
+      user_id: string
+      category_id: string
+      merchant_pattern: string
+      match_type: "exact"
+      source: CategoryRuleSource
+    }> = []
+
+    for (const [norm, categoryId] of dominantByNorm) {
+      const merchant_pattern = patternByNorm.get(norm)
+      if (!merchant_pattern) continue
+      ruleRows.push({
+        user_id: userId,
+        category_id: categoryId,
+        merchant_pattern,
+        match_type: "exact",
+        source: categoryRuleSourceSchema.parse("ai"),
+      })
+    }
+
+    if (ruleRows.length > 0) {
+      const { error: ruleErr } = await supabase.from("category_rules").upsert(ruleRows, {
+        onConflict: "user_id,merchant_pattern_normalized",
+        ignoreDuplicates: true,
+      })
+      if (ruleErr) {
+        throw new Error(`Failed to persist AI category rules: ${ruleErr.message}`)
+      }
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.warn("[categorize] AI categorisation failed (rule-based results kept):", msg)
+  }
+
   return { categorized, total }
 }
 
@@ -212,7 +388,7 @@ export async function learnCategoryRule(
       category_id: categoryId,
       merchant_pattern: trimmed,
       match_type: "exact",
-      source: "learned",
+      source: categoryRuleSourceSchema.parse("learned"),
     },
     { onConflict: "user_id,merchant_pattern_normalized" },
   )
