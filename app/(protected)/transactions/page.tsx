@@ -1,5 +1,9 @@
 import { addMonths, format } from "date-fns"
 
+import {
+  TRANSACTIONS_PAGE_SIZE,
+  TransactionsPagination,
+} from "@/components/transactions/transactions-pagination"
 import { TransactionsFilters } from "@/components/transactions/transactions-filters"
 import { TransactionRow } from "@/components/transactions/transaction-row"
 import { getBillingPeriodContaining, parseMonthParam } from "@/lib/billing"
@@ -36,6 +40,22 @@ function categoryFromRow(
   return categories
 }
 
+type EqBuilder = { eq: (col: string, val: string) => unknown }
+
+function applyFilters<Q>(
+  query: Q,
+  filters: { categoryFilter: string | null; typeFilter: string | null },
+): Q {
+  let q: unknown = query
+  if (filters.categoryFilter) {
+    q = (q as EqBuilder).eq("category_id", filters.categoryFilter)
+  }
+  if (filters.typeFilter) {
+    q = (q as EqBuilder).eq("type", filters.typeFilter)
+  }
+  return q as Q
+}
+
 export default async function TransactionsPage({
   searchParams,
 }: {
@@ -43,16 +63,18 @@ export default async function TransactionsPage({
     month?: string
     category?: string
     type?: string
+    page?: string
   }>
 }) {
   const sp = await searchParams
   const user = await getSessionUser()
   if (!user) return null
 
-  const profile = await getProfile()
+  const [profile, categories] = await Promise.all([
+    getProfile(),
+    getCategories(),
+  ])
   if (!profile) return null
-
-  const categories = await getCategories()
 
   const now = new Date()
   const ref = parseMonthParam(sp.month, now)
@@ -67,26 +89,44 @@ export default async function TransactionsPage({
   const typeFilter: TransactionType | null =
     sp.type === "income" || sp.type === "expense" ? sp.type : null
 
+  const pageRaw = typeof sp.page === "string" ? Number.parseInt(sp.page, 10) : 1
+  const pageGuess =
+    Number.isFinite(pageRaw) && pageRaw >= 1 ? pageRaw : 1
+
   const supabase = await createServerSupabaseClient()
-  let txQuery = supabase
-    .from("transactions")
-    .select(
-      "id, type, amount, occurred_at, note, category_id, categories (id, name, color)",
-    )
-    .eq("user_id", user.id)
-    .gte("occurred_at", start)
-    .lte("occurred_at", end)
-    .order("occurred_at", { ascending: false })
-    .limit(500)
 
-  if (categoryFilter) {
-    txQuery = txQuery.eq("category_id", categoryFilter)
-  }
-  if (typeFilter) {
-    txQuery = txQuery.eq("type", typeFilter)
-  }
+  const countQuery = applyFilters(
+    supabase
+      .from("transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .gte("occurred_at", start)
+      .lte("occurred_at", end),
+    { categoryFilter, typeFilter },
+  )
 
-  const { data: transactions } = await txQuery
+  const { count: totalCountRaw } = await countQuery
+  const totalCount = totalCountRaw ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / TRANSACTIONS_PAGE_SIZE))
+  const page = Math.min(pageGuess, totalPages)
+  const rangeFrom = (page - 1) * TRANSACTIONS_PAGE_SIZE
+  const rangeTo = rangeFrom + TRANSACTIONS_PAGE_SIZE - 1
+
+  const dataQuery = applyFilters(
+    supabase
+      .from("transactions")
+      .select(
+        "id, type, amount, occurred_at, note, category_id, categories (id, name, color)",
+      )
+      .eq("user_id", user.id)
+      .gte("occurred_at", start)
+      .lte("occurred_at", end)
+      .order("occurred_at", { ascending: false })
+      .range(rangeFrom, rangeTo),
+    { categoryFilter, typeFilter },
+  )
+
+  const { data: transactions } = await dataQuery
   const rows = (transactions ?? []) as TxRow[]
 
   const monthValue = format(ref, "yyyy-MM")
@@ -96,6 +136,13 @@ export default async function TransactionsPage({
     const p = getBillingPeriodContaining(d, profile.month_start_day)
     return { value: v, label: p.label }
   })
+
+  const paginationQuery: Record<string, string | undefined> = {}
+  if (typeof sp.month === "string" && sp.month.length > 0) {
+    paginationQuery.month = sp.month
+  }
+  if (categoryFilter) paginationQuery.category = categoryFilter
+  if (typeFilter) paginationQuery.type = typeFilter
 
   return (
     <div className="flex flex-col gap-4 pb-4">
@@ -112,24 +159,31 @@ export default async function TransactionsPage({
           No transactions for these filters.
         </p>
       ) : (
-        <ul className="flex flex-col gap-2" aria-label="Transactions">
-          {rows.map((t) => {
-            const cat = categoryFromRow(t.categories)
-            return (
-              <TransactionRow
-                key={t.id}
-                id={t.id}
-                amount={Number(t.amount)}
-                type={t.type}
-                occurredAt={t.occurred_at}
-                note={t.note}
-                categoryName={cat?.name ?? "Category"}
-                categoryColor={cat?.color ?? null}
-                currency={profile.currency}
-              />
-            )
-          })}
-        </ul>
+        <>
+          <ul className="flex flex-col gap-2" aria-label="Transactions">
+            {rows.map((t) => {
+              const cat = categoryFromRow(t.categories)
+              return (
+                <TransactionRow
+                  key={t.id}
+                  id={t.id}
+                  amount={Number(t.amount)}
+                  type={t.type}
+                  occurredAt={t.occurred_at}
+                  note={t.note}
+                  categoryName={cat?.name ?? "Category"}
+                  categoryColor={cat?.color ?? null}
+                  currency={profile.currency}
+                />
+              )
+            })}
+          </ul>
+          <TransactionsPagination
+            page={page}
+            totalCount={totalCount}
+            query={paginationQuery}
+          />
+        </>
       )}
     </div>
   )

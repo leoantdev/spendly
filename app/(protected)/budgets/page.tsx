@@ -20,18 +20,27 @@ export default async function BudgetsPage() {
   const end = format(period.end, "yyyy-MM-dd")
   const monthYear = format(period.start, "yyyy-MM-dd")
 
-  const categories = await getCategories()
-  const expenseCategories = categories.filter((c) => c.type === "expense")
-
   const supabase = await createServerSupabaseClient()
 
-  const { data: txs } = await supabase
-    .from("transactions")
-    .select("category_id, type, amount")
-    .eq("user_id", user.id)
-    .eq("type", "expense")
-    .gte("occurred_at", start)
-    .lte("occurred_at", end)
+  const [categories, txsResult, budgetsResult] = await Promise.all([
+    getCategories(),
+    supabase
+      .from("transactions")
+      .select("category_id, type, amount")
+      .eq("user_id", user.id)
+      .eq("type", "expense")
+      .gte("occurred_at", start)
+      .lte("occurred_at", end),
+    supabase
+      .from("budgets")
+      .select("category_id, amount")
+      .eq("user_id", user.id)
+      .eq("month_year", monthYear),
+  ])
+
+  const expenseCategories = categories.filter((c) => c.type === "expense")
+
+  const { data: txs } = txsResult
 
   const spentByCategory = new Map<string, number>()
   for (const row of (txs ?? []) as (TxAgg & { amount: string })[]) {
@@ -42,11 +51,7 @@ export default async function BudgetsPage() {
     )
   }
 
-  const { data: budgets } = await supabase
-    .from("budgets")
-    .select("category_id, amount")
-    .eq("user_id", user.id)
-    .eq("month_year", monthYear)
+  const { data: budgets } = budgetsResult
 
   const budgetByCategory = new Map<string, number>()
   for (const b of budgets ?? []) {

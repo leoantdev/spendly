@@ -18,7 +18,7 @@ export async function createServerSupabaseClient() {
               cookieStore.set(name, value, options),
             )
           } catch {
-            // Server Component — cookie updates can fail; middleware refreshes session
+            // Server Component — cookie updates can fail; proxy refreshes session
           }
         },
       },

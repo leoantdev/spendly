@@ -21,6 +21,7 @@
 # misc
 .DS_Store
 *.pem
+performance-review-plan.md
 
 # debug
 npm-debug.log*

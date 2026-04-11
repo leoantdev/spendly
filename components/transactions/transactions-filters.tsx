@@ -35,6 +35,7 @@ export function TransactionsFilters({
 
   function navigate(next: Record<string, string | null | undefined>) {
     const params = new URLSearchParams(searchParams.toString())
+    params.delete("page")
     for (const [k, v] of Object.entries(next)) {
       if (v === null || v === undefined || v === "" || v === "all") {
         params.delete(k)

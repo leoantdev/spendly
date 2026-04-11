@@ -21,7 +21,10 @@ import { createServerSupabaseClient } from "@/lib/supabase/server"
 import type { BankConnection, TransactionType } from "@/lib/types"
 import { classifySyncRunOutcome, type SyncRunOutcome } from "@/lib/truelayer/sync-outcome"
 import { selectSyncHint } from "@/lib/truelayer/sync-hint"
-import { mergeLinkedResourcesWithStats } from "@/lib/truelayer/sync-parse"
+import {
+  mergeLinkedResourcesWithStats,
+  type ParsedTrueLayerLinkedResource,
+} from "@/lib/truelayer/sync-parse"
 import {
   addDedupeKeysForRow,
   isPostgresUniqueViolation,
@@ -276,6 +279,17 @@ async function insertTransactionsBatched(
   return inserted
 }
 
+async function runInBatches<T>(
+  items: readonly T[],
+  batchSize: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize)
+    await Promise.all(batch.map((item) => fn(item)))
+  }
+}
+
 function syncLog(
   source: SyncBankDataSource | undefined,
   runId: string | undefined,
@@ -345,7 +359,31 @@ export async function syncBankDataForUser(
     }
   }
 
-  const cats = await loadUncategorisedCategoryIds(supabase, userId)
+  const [cats, baLoadResult] = await Promise.all([
+    loadUncategorisedCategoryIds(supabase, userId),
+    supabase
+      .from("bank_accounts")
+      .select("id, account_id, truelayer_account_id_hash")
+      .eq("user_id", userId),
+  ])
+
+  if (baLoadResult.error) {
+    throw new Error(`Failed to load bank accounts: ${baLoadResult.error.message}`)
+  }
+
+  const bankAccountByHash = new Map<
+    string,
+    { id: string; account_id: string }
+  >()
+  for (const row of baLoadResult.data ?? []) {
+    const h = row.truelayer_account_id_hash
+    if (typeof h === "string" && h.length > 0) {
+      bankAccountByHash.set(h, {
+        id: row.id as string,
+        account_id: row.account_id as string,
+      })
+    }
+  }
 
   let accountsSynced = 0
   let newTransactionsImported = 0
@@ -374,27 +412,33 @@ export async function syncBankDataForUser(
 
     connectionsFetched += 1
 
-    let accountsErr = false
-    let tlAccounts: Awaited<ReturnType<typeof getAccounts>> = []
-    try {
-      tlAccounts = await getAccounts(accessToken)
-    } catch (e) {
-      accountsErr = true
+    const accountsPromise = getAccounts(accessToken).then(
+      (data) => ({ ok: true as const, data }),
+      (e) => ({ ok: false as const, error: e }),
+    )
+    const cardsPromise = getCards(accessToken).then(
+      (data) => ({ ok: true as const, data }),
+      (e) => ({ ok: false as const, error: e }),
+    )
+    const [accOutcome, cardOutcome] = await Promise.all([
+      accountsPromise,
+      cardsPromise,
+    ])
+
+    const accountsErr = !accOutcome.ok
+    const tlAccounts = accOutcome.ok ? accOutcome.data : []
+    if (!accOutcome.ok) {
       console.warn(
-        `[TrueLayer sync] getAccounts failed for ${connection.id}: ${getErrorMessage(e)}`,
+        `[TrueLayer sync] getAccounts failed for ${connection.id}: ${getErrorMessage(accOutcome.error)}`,
       )
     }
 
-    let cardsErr = false
-    let cardsCaught: unknown
-    let tlCards: Awaited<ReturnType<typeof getCards>> = []
-    try {
-      tlCards = await getCards(accessToken)
-    } catch (e) {
-      cardsErr = true
-      cardsCaught = e
+    const cardsErr = !cardOutcome.ok
+    const cardsCaught: unknown = cardOutcome.ok ? undefined : cardOutcome.error
+    const tlCards = cardOutcome.ok ? cardOutcome.data : []
+    if (!cardOutcome.ok) {
       console.warn(
-        `[TrueLayer sync] getCards failed for ${connection.id}: ${getErrorMessage(e)}`,
+        `[TrueLayer sync] getCards failed for ${connection.id}: ${getErrorMessage(cardOutcome.error)}`,
       )
     }
 
@@ -429,23 +473,16 @@ export async function syncBankDataForUser(
 
     const pendingRows: Record<string, unknown>[] = []
 
+    type Resolved = {
+      parsed: ParsedTrueLayerLinkedResource
+      internalAccountId: string
+      accountIdHash: string
+    }
+    const resolved: Resolved[] = []
+
     for (const parsed of merged.values()) {
       const accountIdHash = hashSensitiveValue(parsed.accountId)
-
-      const { data: existingBa, error: baSelErr } = await supabase
-        .from("bank_accounts")
-        .select("id, account_id")
-        .eq("user_id", userId)
-        .eq("truelayer_account_id_hash", accountIdHash)
-        .maybeSingle()
-
-      if (baSelErr) {
-        console.warn(
-          `[TrueLayer sync] bank_accounts select failed:`,
-          baSelErr.message,
-        )
-        continue
-      }
+      const existingBa = bankAccountByHash.get(accountIdHash)
 
       let internalAccountId: string | null = existingBa?.account_id ?? null
 
@@ -469,16 +506,20 @@ export async function syncBankDataForUser(
         internalAccountId = newAcc.id as string
 
         const nowIso = new Date().toISOString()
-        const { error: baInsErr } = await supabase.from("bank_accounts").insert({
-          user_id: userId,
-          account_id: internalAccountId,
-          bank_connection_id: connection.id,
-          truelayer_account_id_hash: accountIdHash,
-          name: parsed.displayName,
-          institution: parsed.institution,
-          currency: parsed.currency,
-          updated_at: nowIso,
-        })
+        const { data: insertedBa, error: baInsErr } = await supabase
+          .from("bank_accounts")
+          .insert({
+            user_id: userId,
+            account_id: internalAccountId,
+            bank_connection_id: connection.id,
+            truelayer_account_id_hash: accountIdHash,
+            name: parsed.displayName,
+            institution: parsed.institution,
+            currency: parsed.currency,
+            updated_at: nowIso,
+          })
+          .select("id")
+          .single()
 
         if (baInsErr) {
           if (isPostgresUniqueViolation(baInsErr)) {
@@ -489,11 +530,11 @@ export async function syncBankDataForUser(
               .eq("user_id", userId)
             const { data: winnerBa, error: reSelErr } = await supabase
               .from("bank_accounts")
-              .select("account_id")
+              .select("id, account_id")
               .eq("user_id", userId)
               .eq("truelayer_account_id_hash", accountIdHash)
               .maybeSingle()
-            if (reSelErr || !winnerBa?.account_id) {
+            if (reSelErr || !winnerBa?.account_id || !winnerBa.id) {
               console.warn(
                 `[TrueLayer sync] bank_accounts race recovery failed:`,
                 reSelErr?.message ?? "missing row",
@@ -501,6 +542,10 @@ export async function syncBankDataForUser(
               continue
             }
             internalAccountId = winnerBa.account_id as string
+            bankAccountByHash.set(accountIdHash, {
+              id: winnerBa.id as string,
+              account_id: internalAccountId,
+            })
           } else {
             console.warn(
               `[TrueLayer sync] bank_accounts insert failed:`,
@@ -513,6 +558,18 @@ export async function syncBankDataForUser(
               .eq("user_id", userId)
             continue
           }
+        } else if (insertedBa?.id) {
+          bankAccountByHash.set(accountIdHash, {
+            id: insertedBa.id as string,
+            account_id: internalAccountId,
+          })
+        } else {
+          await supabase
+            .from("accounts")
+            .delete()
+            .eq("id", internalAccountId)
+            .eq("user_id", userId)
+          continue
         }
       } else if (existingBa?.id) {
         const nowIso = new Date().toISOString()
@@ -533,8 +590,20 @@ export async function syncBankDataForUser(
             baUpErr.message,
           )
         }
+        if (internalAccountId) {
+          bankAccountByHash.set(accountIdHash, {
+            id: existingBa.id as string,
+            account_id: internalAccountId,
+          })
+        }
       }
 
+      if (!internalAccountId) continue
+
+      resolved.push({ parsed, internalAccountId, accountIdHash })
+    }
+
+    await runInBatches(resolved, 2, async ({ parsed, internalAccountId, accountIdHash }) => {
       let txs: TrueLayerTransaction[]
       try {
         txs =
@@ -549,7 +618,7 @@ export async function syncBankDataForUser(
         console.warn(
           `[TrueLayer sync] transaction fetch failed for ${label} hash ${accountIdHash.slice(0, 12)}: ${getErrorMessage(e)}`,
         )
-        continue
+        return
       }
 
       accountsSynced += 1
@@ -576,7 +645,7 @@ export async function syncBankDataForUser(
         })
         if (row) pendingRows.push(row)
       }
-    }
+    })
 
     if (pendingRows.length === 0) continue
 

@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 
 import { applyCookies, updateSession } from "@/lib/supabase/middleware"
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { response, user } = await updateSession(request)
   const pathname = request.nextUrl.pathname
 
@@ -44,6 +44,13 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|workbox-.*|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
-                                ],
+    "/",
+    "/login",
+    "/signup",
+    "/dashboard/:path*",
+    "/transactions/:path*",
+    "/budgets/:path*",
+    "/settings/:path*",
+    "/banks/:path*",
+  ],
 }
