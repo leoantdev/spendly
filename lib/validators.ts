@@ -45,3 +45,9 @@ export const budgetUpsertSchema = z.object({
   monthYear: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   amount: z.coerce.number().min(0),
 })
+
+export const categoryRuleSchema = z.object({
+  merchantPattern: z.string().min(1).max(200).transform((s) => s.trim()),
+  matchType: z.enum(["exact", "contains"]),
+  categoryId: z.string().uuid("Pick a category"),
+})

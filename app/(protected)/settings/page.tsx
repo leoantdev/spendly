@@ -3,11 +3,12 @@ import { Building2Icon, ChevronRightIcon } from "lucide-react"
 
 import { logoutAction } from "@/app/actions/auth"
 import { CategoryManager } from "@/components/categories/category-manager"
+import { CategoryRulesManager } from "@/components/categories/category-rules-manager"
 import { ProfileForm } from "@/components/settings/profile-form"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { getCategories, getProfile, getSessionUser } from "@/lib/data"
+import { getCategories, getCategoryRules, getProfile, getSessionUser } from "@/lib/data"
 
 export default async function SettingsPage() {
   const user = await getSessionUser()
@@ -16,7 +17,10 @@ export default async function SettingsPage() {
   const profile = await getProfile()
   if (!profile) return null
 
-  const categories = await getCategories()
+  const [categories, categoryRules] = await Promise.all([
+    getCategories(),
+    getCategoryRules(),
+  ])
 
   return (
     <div className="flex flex-col gap-6 pb-6">
@@ -55,6 +59,12 @@ export default async function SettingsPage() {
       <Card>
         <CardContent className="pt-6">
           <CategoryManager categories={categories} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="pt-6">
+          <CategoryRulesManager rules={categoryRules} categories={categories} />
         </CardContent>
       </Card>
 

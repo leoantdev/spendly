@@ -13,10 +13,7 @@ import {
 } from "@/lib/truelayer/client"
 import { hashSensitiveValue } from "@/lib/truelayer/secret-store"
 import { BankConnectionError, ensureBankConnectionAccessToken } from "@/lib/truelayer/tokens"
-import {
-  UNCATEGORISED_EXPENSE_KEY,
-  UNCATEGORISED_INCOME_KEY,
-} from "@/lib/category-system"
+import { categorizeTransactions, loadUncategorisedCategoryIds } from "@/lib/categorize"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import type { BankConnection, TransactionType } from "@/lib/types"
 import { classifySyncRunOutcome, type SyncRunOutcome } from "@/lib/truelayer/sync-outcome"
@@ -38,6 +35,8 @@ export type { SyncRunOutcome } from "@/lib/truelayer/sync-outcome"
 export type SyncBankDataStats = {
   accountsSynced: number
   newTransactionsImported: number
+  /** Transactions moved from Uncategorised via rules after this sync. */
+  transactionsAutoCategorized: number
   hint?: string | null
   /** Set from connection/token/hint metrics; use for cron scheduling, not manual UI. */
   outcome: SyncRunOutcome
@@ -156,44 +155,11 @@ function mapTrueLayerTransaction(
     amount: amountStr,
     occurred_at: occurredAt,
     note,
+    merchant_name: merchant,
     truelayer_transaction_id: tlTransactionId,
     normalised_provider_transaction_id_hash: normalisedHash,
     provider_transaction_id_hash: providerIdHash,
   }
-}
-
-async function loadUncategorisedCategoryIds(
-  supabase: SyncSupabase,
-  userId: string,
-): Promise<{ expense: string; income: string }> {
-  const { data, error } = await supabase
-    .from("categories")
-    .select("id, system_key")
-    .eq("user_id", userId)
-    .in("system_key", [UNCATEGORISED_EXPENSE_KEY, UNCATEGORISED_INCOME_KEY])
-
-  if (error) {
-    throw new Error(`Failed to load system import categories: ${error.message}`)
-  }
-
-  let expense: string | undefined
-  let income: string | undefined
-  for (const row of data ?? []) {
-    if (row.system_key === UNCATEGORISED_EXPENSE_KEY && typeof row.id === "string") {
-      expense = row.id
-    }
-    if (row.system_key === UNCATEGORISED_INCOME_KEY && typeof row.id === "string") {
-      income = row.id
-    }
-  }
-
-  if (!expense || !income) {
-    throw new Error(
-      "Missing system import categories for this user. Run migrations or seed categories.",
-    )
-  }
-
-  return { expense, income }
 }
 
 async function loadExistingDedupeKeys(
@@ -251,32 +217,39 @@ async function loadExistingDedupeKeys(
 async function insertTransactionsBatched(
   supabase: SyncSupabase,
   rows: Record<string, unknown>[],
-): Promise<number> {
+): Promise<string[]> {
   const BATCH = 100
-  let inserted = 0
+  const insertedIds: string[] = []
 
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH)
-    const { error } = await supabase.from("transactions").insert(batch)
-    if (!error) {
-      inserted += batch.length
+    const { data, error } = await supabase.from("transactions").insert(batch).select("id")
+    if (!error && data) {
+      for (const row of data) {
+        const id = (row as { id?: unknown }).id
+        if (typeof id === "string") insertedIds.push(id)
+      }
       continue
     }
 
     for (const row of batch) {
-      const { error: oneErr } = await supabase.from("transactions").insert(row)
-      if (!oneErr) {
-        inserted += 1
+      const { data: one, error: oneErr } = await supabase
+        .from("transactions")
+        .insert(row)
+        .select("id")
+        .maybeSingle()
+      if (!oneErr && one?.id) {
+        insertedIds.push(one.id as string)
         continue
       }
-      const msg = oneErr.message ?? ""
+      const msg = oneErr?.message ?? ""
       const isDup = isPostgresUniqueViolation(oneErr as { code?: string; message?: string })
       if (isDup) continue
       throw new Error(`Transaction insert failed: ${msg}`)
     }
   }
 
-  return inserted
+  return insertedIds
 }
 
 async function runInBatches<T>(
@@ -355,6 +328,7 @@ export async function syncBankDataForUser(
     return {
       accountsSynced: 0,
       newTransactionsImported: 0,
+      transactionsAutoCategorized: 0,
       outcome: "success",
     }
   }
@@ -387,6 +361,7 @@ export async function syncBankDataForUser(
 
   let accountsSynced = 0
   let newTransactionsImported = 0
+  const insertedTxIds: string[] = []
   let tokenSkips = 0
   let connectionsFetched = 0
   let bothEndpointsFailedConnections = 0
@@ -676,8 +651,25 @@ export async function syncBankDataForUser(
 
     if (toInsert.length === 0) continue
 
-    const n = await insertTransactionsBatched(supabase, toInsert)
-    newTransactionsImported += n
+    const ids = await insertTransactionsBatched(supabase, toInsert)
+    insertedTxIds.push(...ids)
+    newTransactionsImported += ids.length
+  }
+
+  let transactionsAutoCategorized = 0
+  if (insertedTxIds.length > 0) {
+    try {
+      const { categorized } = await categorizeTransactions(
+        supabase,
+        userId,
+        insertedTxIds,
+      )
+      transactionsAutoCategorized = categorized
+    } catch (e) {
+      console.warn(
+        `[TrueLayer sync] Auto-categorise failed: ${getErrorMessage(e)}`,
+      )
+    }
   }
 
   const hint = selectSyncHint({
@@ -698,6 +690,7 @@ export async function syncBankDataForUser(
   const stats: SyncBankDataStats = {
     accountsSynced,
     newTransactionsImported,
+    transactionsAutoCategorized,
     outcome,
     ...(hint !== undefined ? { hint } : {}),
   }
@@ -707,6 +700,7 @@ export async function syncBankDataForUser(
       userId,
       accountsSynced,
       newTransactionsImported,
+      transactionsAutoCategorized,
       ...(hint !== undefined ? { hint } : {}),
     })
   }

@@ -2,6 +2,9 @@
 
 import { revalidatePath } from "next/cache"
 
+import { learnCategoryRule } from "@/lib/categorize"
+import { isUncategorisedSystemKey } from "@/lib/category-system"
+import { unwrapSupabaseJoin } from "@/lib/postgrest-join"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import { transactionSchema } from "@/lib/validators"
 
@@ -83,6 +86,15 @@ export async function createTransactionAction(
   return { success: true }
 }
 
+function systemKeyFromCategoriesJoin(categories: unknown): string | null {
+  const row = unwrapSupabaseJoin(
+    categories as { system_key?: unknown } | { system_key?: unknown }[] | null,
+  )
+  if (!row || typeof row !== "object") return null
+  const sk = row.system_key
+  return typeof sk === "string" ? sk : null
+}
+
 export async function updateTransactionAction(
   _: ActionResult | undefined,
   formData: FormData,
@@ -105,6 +117,15 @@ export async function updateTransactionAction(
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { error: "Not signed in" }
+
+  const { data: before, error: beforeErr } = await supabase
+    .from("transactions")
+    .select("category_id, merchant_name, categories (system_key)")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle()
+
+  if (beforeErr || !before) return { error: "Not found" }
 
   const accountId = await getAccountId(supabase, user.id, parsed.data.accountId)
   if (!accountId) return { error: "No account" }
@@ -133,9 +154,30 @@ export async function updateTransactionAction(
     .eq("user_id", user.id)
   if (error) return { error: error.message }
 
+  const oldCategoryId = before.category_id as string
+  const newCategoryId = parsed.data.categoryId
+  const oldSystemKey = systemKeyFromCategoriesJoin(before.categories)
+  const merchantName =
+    typeof before.merchant_name === "string" ? before.merchant_name : null
+
+  // Learned rules are matched with transaction type in categorizeTransactions(), so a stale
+  // type/category mismatch would not apply at runtime; we still upsert for the merchant key.
+  if (
+    oldCategoryId !== newCategoryId &&
+    isUncategorisedSystemKey(oldSystemKey) &&
+    merchantName?.trim()
+  ) {
+    try {
+      await learnCategoryRule(supabase, user.id, merchantName, newCategoryId)
+    } catch (e) {
+      console.warn("[transactions] learn category rule failed:", e)
+    }
+  }
+
   revalidatePath("/transactions")
   revalidatePath("/dashboard")
   revalidatePath("/budgets")
+  revalidatePath("/settings")
   return { success: true }
 }
 

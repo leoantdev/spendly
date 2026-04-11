@@ -35,6 +35,7 @@ let lastBankCallbackHandled: { status: string; at: number } | null = null
 type SyncStats = {
   accountsSynced: number
   newTransactionsImported: number
+  transactionsAutoCategorized?: number
   hint?: string | null
 }
 
@@ -45,12 +46,16 @@ function isSyncStats(value: unknown): value is SyncStats {
   const n = o.newTransactionsImported
   const hintOk =
     o.hint === undefined || o.hint === null || typeof o.hint === "string"
+  const c = o.transactionsAutoCategorized
+  const cOk =
+    c === undefined || (typeof c === "number" && Number.isFinite(c) && c >= 0)
   return (
     typeof a === "number" &&
     Number.isFinite(a) &&
     typeof n === "number" &&
     Number.isFinite(n) &&
-    hintOk
+    hintOk &&
+    cOk
   )
 }
 
@@ -316,10 +321,18 @@ export function BanksPageClient({
         body.newTransactionsImported === 1
           ? "1 new transaction imported"
           : `${body.newTransactionsImported} new transactions imported`
+      const cat =
+        typeof body.transactionsAutoCategorized === "number" &&
+        body.transactionsAutoCategorized > 0
+          ? body.transactionsAutoCategorized === 1
+            ? "1 auto-categorised"
+            : `${body.transactionsAutoCategorized} auto-categorised`
+          : null
+      const base = [resourceLabel, txLabel, cat].filter(Boolean).join(", ") + "."
       const description =
         typeof body.hint === "string" && body.hint.trim()
-          ? `${resourceLabel}, ${txLabel}. ${body.hint}`
-          : `${resourceLabel}, ${txLabel}.`
+          ? `${base} ${body.hint}`
+          : base
 
       toast.success("Sync complete", { description })
       router.refresh()

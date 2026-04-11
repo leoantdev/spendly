@@ -20,7 +20,11 @@ export async function POST() {
       source: "manual",
     })
     revalidatePath("/banks")
-    if (stats.newTransactionsImported > 0 || stats.accountsSynced > 0) {
+    if (
+      stats.newTransactionsImported > 0 ||
+      stats.accountsSynced > 0 ||
+      stats.transactionsAutoCategorized > 0
+    ) {
       revalidatePath("/transactions")
       revalidatePath("/dashboard")
       revalidatePath("/budgets")

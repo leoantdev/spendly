@@ -4,10 +4,16 @@ import {
   TRANSACTIONS_PAGE_SIZE,
   TransactionsPagination,
 } from "@/components/transactions/transactions-pagination"
+import { AutoCategorizeButton } from "@/components/transactions/auto-categorize-button"
 import { TransactionsFilters } from "@/components/transactions/transactions-filters"
 import { TransactionRow } from "@/components/transactions/transaction-row"
+import {
+  UNCATEGORISED_EXPENSE_KEY,
+  UNCATEGORISED_INCOME_KEY,
+} from "@/lib/category-system"
 import { getBillingPeriodContaining, parseMonthParam } from "@/lib/billing"
 import { getCategories, getProfile, getSessionUser } from "@/lib/data"
+import { unwrapSupabaseJoin } from "@/lib/postgrest-join"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import type { TransactionType } from "@/lib/types"
 
@@ -35,9 +41,7 @@ type TxRow = {
 function categoryFromRow(
   categories: TxRow["categories"],
 ): { id: string; name: string; color: string | null } | null {
-  if (!categories) return null
-  if (Array.isArray(categories)) return categories[0] ?? null
-  return categories
+  return unwrapSupabaseJoin(categories)
 }
 
 type EqBuilder = { eq: (col: string, val: string) => unknown }
@@ -94,6 +98,24 @@ export default async function TransactionsPage({
     Number.isFinite(pageRaw) && pageRaw >= 1 ? pageRaw : 1
 
   const supabase = await createServerSupabaseClient()
+
+  const uncategorisedCategoryIds = categories
+    .filter(
+      (c) =>
+        c.system_key === UNCATEGORISED_EXPENSE_KEY ||
+        c.system_key === UNCATEGORISED_INCOME_KEY,
+    )
+    .map((c) => c.id)
+
+  let uncategorisedCount = 0
+  if (uncategorisedCategoryIds.length > 0) {
+    const { count } = await supabase
+      .from("transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .in("category_id", uncategorisedCategoryIds)
+    uncategorisedCount = count ?? 0
+  }
 
   const countQuery = applyFilters(
     supabase
@@ -153,6 +175,8 @@ export default async function TransactionsPage({
         currentCategory={categoryFilter}
         currentType={typeFilter ?? "all"}
       />
+
+      <AutoCategorizeButton uncategorisedCount={uncategorisedCount} />
 
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">

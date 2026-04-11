@@ -52,6 +52,24 @@ export type Account = {
   created_at: string
 }
 
+export type CategoryRuleMatchType = "exact" | "contains"
+
+export type CategoryRuleSource = "learned" | "manual"
+
+export type CategoryRule = {
+  id: string
+  user_id: string
+  category_id: string
+  merchant_pattern: string
+  match_type: CategoryRuleMatchType
+  source: CategoryRuleSource
+  created_at: string
+}
+
+export type CategoryRuleWithCategory = CategoryRule & {
+  category: Pick<Category, "id" | "name" | "color" | "type">
+}
+
 export type Transaction = {
   id: string
   user_id: string
@@ -61,6 +79,8 @@ export type Transaction = {
   amount: string
   occurred_at: string
   note: string | null
+  /** Provider merchant name at bank import; used for rule matching. */
+  merchant_name: string | null
   truelayer_transaction_id: string | null
   created_at: string
 }

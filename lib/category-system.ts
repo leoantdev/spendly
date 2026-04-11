@@ -9,3 +9,9 @@ export type CategorySystemKey =
 export function isSystemCategory(systemKey: string | null | undefined): boolean {
   return Boolean(systemKey)
 }
+
+export function isUncategorisedSystemKey(systemKey: string | null | undefined): boolean {
+  return (
+    systemKey === UNCATEGORISED_EXPENSE_KEY || systemKey === UNCATEGORISED_INCOME_KEY
+  )
+}

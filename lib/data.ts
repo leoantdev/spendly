@@ -1,6 +1,7 @@
 import { cache } from "react"
 
-import type { Account, Category, Profile } from "@/lib/types"
+import type { Account, Category, CategoryRuleWithCategory, Profile } from "@/lib/types"
+import { unwrapSupabaseJoin } from "@/lib/postgrest-join"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 
 export const getSessionUser = cache(async () => {
@@ -51,4 +52,61 @@ export const getCategories = cache(async (): Promise<Category[]> => {
     .order("name", { ascending: true })
   if (error || !data) return []
   return data as Category[]
+})
+
+export const getCategoryRules = cache(async (): Promise<CategoryRuleWithCategory[]> => {
+  const supabase = await createServerSupabaseClient()
+  const user = await getSessionUser()
+  if (!user) return []
+  const { data, error } = await supabase
+    .from("category_rules")
+    .select(
+      `
+      id,
+      user_id,
+      category_id,
+      merchant_pattern,
+      match_type,
+      source,
+      created_at,
+      categories (id, name, color, type)
+    `,
+    )
+    .eq("user_id", user.id)
+    .order("merchant_pattern", { ascending: true })
+  if (error || !data) return []
+
+  const out: CategoryRuleWithCategory[] = []
+  for (const row of data) {
+    const cat = unwrapSupabaseJoin(
+      row.categories as
+        | { id: string; name: string; color: string | null; type: string }
+        | { id: string; name: string; color: string | null; type: string }[]
+        | null,
+    )
+    if (
+      !cat ||
+      typeof cat.id !== "string" ||
+      typeof cat.name !== "string" ||
+      (cat.type !== "income" && cat.type !== "expense")
+    ) {
+      continue
+    }
+    out.push({
+      id: row.id as string,
+      user_id: row.user_id as string,
+      category_id: row.category_id as string,
+      merchant_pattern: row.merchant_pattern as string,
+      match_type: row.match_type as CategoryRuleWithCategory["match_type"],
+      source: row.source as CategoryRuleWithCategory["source"],
+      created_at: row.created_at as string,
+      category: {
+        id: cat.id,
+        name: cat.name,
+        color: cat.color ?? null,
+        type: cat.type,
+      },
+    })
+  }
+  return out
 })
