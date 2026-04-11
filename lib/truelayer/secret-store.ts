@@ -54,60 +54,26 @@ async function readVaultSecret(secretId: string): Promise<string> {
   return data
 }
 
-/** Best-effort: log and continue if Vault delete fails (e.g. secret already removed). */
-async function deleteVaultSecretBestEffort(secretId: string | null): Promise<void> {
-  if (!secretId) return
-  const admin = createAdminSupabaseClient()
-  const { error } = await admin.rpc("delete_vault_secret", {
-    secret_id: secretId,
-  })
-  if (error) {
-    console.warn(
-      "[bank disconnect] delete_vault_secret failed:",
-      secretId,
-      error.message,
-    )
-  }
-}
-
 /**
- * Removes the bank connection row and Vault token secrets. `bank_accounts` rows
- * for this connection are removed by ON DELETE CASCADE; linked `accounts` and
- * `transactions` are kept for history.
+ * Removes the bank connection row and Vault token secrets in one DB transaction.
+ * `bank_accounts` rows for this connection are removed by ON DELETE CASCADE;
+ * linked `accounts` and `transactions` are kept for history.
  */
 export async function disconnectBankConnectionForUser(args: {
   userId: string
   connectionId: string
 }): Promise<{ removed: boolean }> {
   const admin = createAdminSupabaseClient()
-  const { data: row, error: loadError } = await admin
-    .from("bank_connections")
-    .select("id, access_token_secret_id, refresh_token_secret_id")
-    .eq("id", args.connectionId)
-    .eq("user_id", args.userId)
-    .maybeSingle()
+  const { data, error } = await admin.rpc("disconnect_bank_connection_for_user", {
+    p_user_id: args.userId,
+    p_connection_id: args.connectionId,
+  })
 
-  if (loadError) {
-    throw new Error(`Failed to load bank connection: ${loadError.message}`)
-  }
-  if (!row) {
-    return { removed: false }
+  if (error) {
+    throw new Error(error.message)
   }
 
-  await deleteVaultSecretBestEffort(row.access_token_secret_id)
-  await deleteVaultSecretBestEffort(row.refresh_token_secret_id)
-
-  const { error: deleteError } = await admin
-    .from("bank_connections")
-    .delete()
-    .eq("id", args.connectionId)
-    .eq("user_id", args.userId)
-
-  if (deleteError) {
-    throw new Error(deleteError.message)
-  }
-
-  return { removed: true }
+  return { removed: data === true }
 }
 
 async function upsertVaultSecret(

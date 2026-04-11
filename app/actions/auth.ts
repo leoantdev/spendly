@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 
+import { sanitizeNextPath } from "@/lib/auth/sanitize-next-path"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import { loginSchema, signupSchema } from "@/lib/validators"
 
@@ -25,9 +26,9 @@ export async function loginAction(
   if (error) return { error: error.message }
 
   revalidatePath("/", "layout")
-  const next = formData.get("next")
-  if (typeof next === "string" && next.startsWith("/")) {
-    redirect(next)
+  const safeNext = sanitizeNextPath(formData.get("next"))
+  if (safeNext) {
+    redirect(safeNext)
   }
   redirect("/dashboard")
 }

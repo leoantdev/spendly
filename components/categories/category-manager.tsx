@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { isSystemCategory } from "@/lib/category-system"
 import { CATEGORY_COLOR_PRESETS } from "@/lib/constants"
 import { cn } from "@/lib/utils"
 import type { Category, TransactionType } from "@/lib/types"
@@ -115,6 +116,7 @@ function CategoryDialog({
               <input type="hidden" name="type" value={type} />
               <Select
                 value={type}
+                disabled={Boolean(category?.system_key)}
                 onValueChange={(v) =>
                   setType(v === "income" || v === "expense" ? v : "expense")
                 }
@@ -267,7 +269,9 @@ export function CategoryManager({ categories }: { categories: Category[] }) {
                   </Button>
                 }
               />
-              <DeleteCategoryButton category={c} />
+              {isSystemCategory(c.system_key) ? null : (
+                <DeleteCategoryButton category={c} />
+              )}
             </div>
           </li>
         ))}

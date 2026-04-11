@@ -5,6 +5,8 @@ const withPWA = withPWAInit({
   disable: process.env.NODE_ENV === "development",
   register: true,
   workboxOptions: {
+    cleanupOutdatedCaches: true,
+    importScripts: ["sw-privacy-cleanup.js"],
     runtimeCaching: [
       {
         urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
@@ -15,15 +17,10 @@ const withPWA = withPWAInit({
           request.mode === "navigate" &&
           (url.pathname.startsWith("/dashboard") ||
             url.pathname.startsWith("/transactions") ||
-            url.pathname.startsWith("/budgets")),
-        handler: "StaleWhileRevalidate",
-        options: {
-          cacheName: "pages-cache",
-          expiration: {
-            maxEntries: 32,
-            maxAgeSeconds: 24 * 60 * 60,
-          },
-        },
+            url.pathname.startsWith("/budgets") ||
+            url.pathname.startsWith("/settings") ||
+            url.pathname.startsWith("/banks")),
+        handler: "NetworkOnly",
       },
     ],
   },

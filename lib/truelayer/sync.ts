@@ -13,6 +13,10 @@ import {
 } from "@/lib/truelayer/client"
 import { hashSensitiveValue } from "@/lib/truelayer/secret-store"
 import { BankConnectionError, ensureBankConnectionAccessToken } from "@/lib/truelayer/tokens"
+import {
+  UNCATEGORISED_EXPENSE_KEY,
+  UNCATEGORISED_INCOME_KEY,
+} from "@/lib/category-system"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import type { BankConnection, TransactionType } from "@/lib/types"
 import { classifySyncRunOutcome, type SyncRunOutcome } from "@/lib/truelayer/sync-outcome"
@@ -161,25 +165,28 @@ async function loadUncategorisedCategoryIds(
 ): Promise<{ expense: string; income: string }> {
   const { data, error } = await supabase
     .from("categories")
-    .select("id, type")
+    .select("id, system_key")
     .eq("user_id", userId)
-    .eq("name", "Uncategorised")
-    .in("type", ["expense", "income"])
+    .in("system_key", [UNCATEGORISED_EXPENSE_KEY, UNCATEGORISED_INCOME_KEY])
 
   if (error) {
-    throw new Error(`Failed to load Uncategorised categories: ${error.message}`)
+    throw new Error(`Failed to load system import categories: ${error.message}`)
   }
 
   let expense: string | undefined
   let income: string | undefined
   for (const row of data ?? []) {
-    if (row.type === "expense" && typeof row.id === "string") expense = row.id
-    if (row.type === "income" && typeof row.id === "string") income = row.id
+    if (row.system_key === UNCATEGORISED_EXPENSE_KEY && typeof row.id === "string") {
+      expense = row.id
+    }
+    if (row.system_key === UNCATEGORISED_INCOME_KEY && typeof row.id === "string") {
+      income = row.id
+    }
   }
 
   if (!expense || !income) {
     throw new Error(
-      "Missing Uncategorised expense/income categories for this user. Run migrations or seed categories.",
+      "Missing system import categories for this user. Run migrations or seed categories.",
     )
   }
 

@@ -59,16 +59,40 @@ export async function updateCategoryAction(
   } = await supabase.auth.getUser()
   if (!user) return { error: "Not signed in" }
 
-  const { error } = await supabase
+  const { data: existing, error: loadErr } = await supabase
     .from("categories")
-    .update({
-      name: parsed.data.name,
-      type: parsed.data.type,
-      color: parsed.data.color,
-    })
+    .select("system_key, type")
     .eq("id", id)
     .eq("user_id", user.id)
-  if (error) return { error: error.message }
+    .maybeSingle()
+  if (loadErr) return { error: loadErr.message }
+  if (!existing) return { error: "Category not found" }
+
+  if (existing.system_key) {
+    if (parsed.data.type !== existing.type) {
+      return { error: "Cannot change type of system category" }
+    }
+    const { error } = await supabase
+      .from("categories")
+      .update({
+        name: parsed.data.name,
+        color: parsed.data.color,
+      })
+      .eq("id", id)
+      .eq("user_id", user.id)
+    if (error) return { error: error.message }
+  } else {
+    const { error } = await supabase
+      .from("categories")
+      .update({
+        name: parsed.data.name,
+        type: parsed.data.type,
+        color: parsed.data.color,
+      })
+      .eq("id", id)
+      .eq("user_id", user.id)
+    if (error) return { error: error.message }
+  }
   revalidatePath("/settings")
   revalidatePath("/transactions")
   revalidatePath("/transactions/new")
@@ -86,6 +110,16 @@ export async function deleteCategoryAction(formData: FormData) {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { error: "Not signed in" }
+
+  const { data: existing, error: loadErr } = await supabase
+    .from("categories")
+    .select("system_key")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle()
+  if (loadErr) return { error: loadErr.message }
+  if (!existing) return { error: "Category not found" }
+  if (existing.system_key) return { error: "Cannot delete system category" }
 
   const { error } = await supabase
     .from("categories")

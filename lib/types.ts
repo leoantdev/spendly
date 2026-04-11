@@ -40,6 +40,8 @@ export type Category = {
   type: TransactionType
   color: string | null
   is_default: boolean
+  /** When set, row is protected (import fallbacks); see migration `system_key`. */
+  system_key: string | null
   created_at: string
 }
 

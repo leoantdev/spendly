@@ -36,10 +36,10 @@ export async function updateSession(request: NextRequest) {
   return { response, user }
 }
 
-/** Copy Set-Cookie headers from session refresh response onto a redirect. */
+/** Copy Set-Cookie headers from session refresh response onto a redirect (preserves attributes). */
 export function applyCookies(from: NextResponse, to: NextResponse) {
   from.cookies.getAll().forEach((cookie) => {
-    to.cookies.set(cookie.name, cookie.value)
+    to.cookies.set(cookie)
   })
   return to
 }
