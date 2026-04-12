@@ -108,6 +108,8 @@ export async function upsertBankConnectionSecretState(args: {
   expiresAt: string | null
   status: BankConnectionStatus
   updatedAt: string
+  /** From GET /me `provider.provider_id` (e.g. ob-barclays). */
+  truelayerProviderId?: string | null
 }): Promise<string> {
   const admin = createAdminSupabaseClient()
   const truelayerUserIdHash = hashSensitiveValue(args.truelayerUserId)
@@ -136,6 +138,11 @@ export async function upsertBankConnectionSecretState(args: {
     "TrueLayer refresh token for Spendly bank connection",
   )
 
+  const providerId =
+    typeof args.truelayerProviderId === "string" && args.truelayerProviderId.trim().length > 0
+      ? args.truelayerProviderId.trim()
+      : null
+
   const payload = {
     user_id: args.userId,
     truelayer_user_id_hash: truelayerUserIdHash,
@@ -145,6 +152,7 @@ export async function upsertBankConnectionSecretState(args: {
     expires_at: args.expiresAt,
     status: args.status,
     updated_at: args.updatedAt,
+    truelayer_provider_id: providerId,
   }
 
   const { data, error } = await admin

@@ -3,6 +3,8 @@
  * Both use `account_id`, `display_name`, `currency`, and nested `provider`.
  */
 
+import { isRecord, readString } from "@/lib/truelayer/parse-helpers"
+
 export type TrueLayerLinkedResourceKind = "account" | "card"
 
 export type ParsedTrueLayerLinkedResource = {
@@ -13,22 +15,16 @@ export type ParsedTrueLayerLinkedResource = {
   institution: string
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
-}
-
-function readString(r: Record<string, unknown>, key: string): string | null {
-  const v = r[key]
-  if (typeof v !== "string") return null
-  const t = v.trim()
-  return t.length > 0 ? t : null
-}
-
 /**
  * Parse a single TrueLayer account or card object from Data API `results`.
  */
 /** UK-first default when the provider omits currency (matches profile default in migrations). */
 const FALLBACK_CURRENCY = "GBP"
+
+export type ParseTrueLayerLinkedResourceOptions = {
+  /** Used when the provider omits account/card currency (e.g. profile currency). */
+  defaultCurrency?: string
+}
 
 function fallbackDisplayName(accountId: string, raw: Record<string, unknown>): string {
   const fromAlt = readString(raw, "name")
@@ -41,13 +37,16 @@ function fallbackDisplayName(accountId: string, raw: Record<string, unknown>): s
 export function parseTrueLayerLinkedResource(
   raw: unknown,
   kind: TrueLayerLinkedResourceKind,
+  options?: ParseTrueLayerLinkedResourceOptions,
 ): ParsedTrueLayerLinkedResource | null {
   if (!isRecord(raw)) return null
   const accountId = readString(raw, "account_id")
   if (!accountId) return null
   const displayName =
     readString(raw, "display_name") ?? fallbackDisplayName(accountId, raw)
-  const currency = readString(raw, "currency") ?? FALLBACK_CURRENCY
+  const dc = options?.defaultCurrency?.trim()
+  const currency =
+    readString(raw, "currency") ?? (dc && dc.length > 0 ? dc : null) ?? FALLBACK_CURRENCY
 
   let institution = "Bank"
   const provider = raw.provider
@@ -70,6 +69,8 @@ export type MergeLinkedResourcesStats = {
   cardSupersededByAccount: number
 }
 
+export type MergeLinkedResourcesOptions = ParseTrueLayerLinkedResourceOptions
+
 /**
  * Merge `/accounts` and `/cards` results by TrueLayer `account_id`.
  * Bank accounts win when the same id appears in both (unlikely).
@@ -77,6 +78,7 @@ export type MergeLinkedResourcesStats = {
 export function mergeLinkedResourcesWithStats(
   accountRows: unknown[],
   cardRows: unknown[],
+  options?: MergeLinkedResourcesOptions,
 ): MergeLinkedResourcesStats {
   const merged = new Map<string, ParsedTrueLayerLinkedResource>()
   let accountParseFailures = 0
@@ -84,12 +86,12 @@ export function mergeLinkedResourcesWithStats(
   let cardSupersededByAccount = 0
 
   for (const raw of accountRows) {
-    const p = parseTrueLayerLinkedResource(raw, "account")
+    const p = parseTrueLayerLinkedResource(raw, "account", options)
     if (p) merged.set(p.accountId, p)
     else accountParseFailures += 1
   }
   for (const raw of cardRows) {
-    const p = parseTrueLayerLinkedResource(raw, "card")
+    const p = parseTrueLayerLinkedResource(raw, "card", options)
     if (!p) {
       cardParseFailures += 1
       continue
@@ -116,6 +118,7 @@ export function mergeLinkedResourcesWithStats(
 export function mergeLinkedResources(
   accountRows: unknown[],
   cardRows: unknown[],
+  options?: MergeLinkedResourcesOptions,
 ): Map<string, ParsedTrueLayerLinkedResource> {
-  return mergeLinkedResourcesWithStats(accountRows, cardRows).merged
+  return mergeLinkedResourcesWithStats(accountRows, cardRows, options).merged
 }

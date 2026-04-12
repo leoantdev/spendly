@@ -11,11 +11,12 @@ import {
   TrueLayerApiError,
   type TrueLayerTransaction,
 } from "@/lib/truelayer/client"
+import { mapTrueLayerTransaction } from "@/lib/truelayer/sync-map"
 import { hashSensitiveValue } from "@/lib/truelayer/secret-store"
 import { BankConnectionError, ensureBankConnectionAccessToken } from "@/lib/truelayer/tokens"
 import { categorizeTransactions, loadUncategorisedCategoryIds } from "@/lib/categorize"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
-import type { BankConnection, TransactionType } from "@/lib/types"
+import type { BankConnection } from "@/lib/types"
 import { classifySyncRunOutcome, type SyncRunOutcome } from "@/lib/truelayer/sync-outcome"
 import { selectSyncHint } from "@/lib/truelayer/sync-hint"
 import {
@@ -59,27 +60,6 @@ export type SyncBankDataForUserOptions = {
 
 type SyncSupabase = SupabaseClient
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
-}
-
-function readString(r: Record<string, unknown>, key: string): string | null {
-  const v = r[key]
-  if (typeof v !== "string") return null
-  const t = v.trim()
-  return t.length > 0 ? t : null
-}
-
-function readNumber(r: Record<string, unknown>, key: string): number | null {
-  const v = r[key]
-  if (typeof v === "number" && Number.isFinite(v)) return v
-  if (typeof v === "string" && v.trim()) {
-    const n = Number(v)
-    return Number.isFinite(n) ? n : null
-  }
-  return null
-}
-
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message
   return "Unknown error"
@@ -102,73 +82,12 @@ function isCardsScopeLikelyDenied(error: unknown): boolean {
   return false
 }
 
-function parseOccurredAtDate(timestamp: string | null): string | null {
-  if (!timestamp) return null
-  const d = new Date(timestamp)
-  if (!Number.isFinite(d.getTime())) return null
-  return format(d, "yyyy-MM-dd")
-}
-
-function mapTrueLayerTransaction(
-  tl: TrueLayerTransaction,
-  ctx: {
-    userId: string
-    accountId: string
-    categoryIdExpense: string
-    categoryIdIncome: string
-  },
-): Record<string, unknown> | null {
-  if (!isRecord(tl)) return null
-
-  const normalised = readString(tl, "normalised_provider_transaction_id")
-  const providerId = readString(tl, "provider_transaction_id")
-  const normalisedHash = normalised ? hashSensitiveValue(normalised) : null
-  const providerIdHash = providerId ? hashSensitiveValue(providerId) : null
-  if (!normalisedHash && !providerIdHash) return null
-
-  const tlTransactionId = readString(tl, "transaction_id")
-  const ts = readString(tl, "timestamp")
-  const occurredAt = parseOccurredAtDate(ts)
-  if (!occurredAt) return null
-
-  const rawAmount = readNumber(tl, "amount")
-  if (rawAmount === null) return null
-
-  const txTypeRaw = readString(tl, "transaction_type")
-  const type: TransactionType =
-    txTypeRaw?.toUpperCase() === "CREDIT" ? "income" : "expense"
-  const categoryId =
-    type === "income" ? ctx.categoryIdIncome : ctx.categoryIdExpense
-
-  const description = readString(tl, "description")
-  const merchant = readString(tl, "merchant_name")
-  const note = description ?? merchant ?? null
-  /** Many providers omit `merchant_name`; use description so auto-categorise / rules can match. */
-  const merchantForRow = merchant ?? description ?? null
-
-  const abs = Math.abs(rawAmount)
-  const amountStr = abs.toFixed(2)
-
-  return {
-    user_id: ctx.userId,
-    account_id: ctx.accountId,
-    category_id: categoryId,
-    type,
-    amount: amountStr,
-    occurred_at: occurredAt,
-    note,
-    merchant_name: merchantForRow,
-    truelayer_transaction_id: tlTransactionId,
-    normalised_provider_transaction_id_hash: normalisedHash,
-    provider_transaction_id_hash: providerIdHash,
-  }
-}
-
 async function loadExistingDedupeKeys(
   supabase: SyncSupabase,
   userId: string,
   normalisedIds: string[],
   providerIds: string[],
+  fingerprintIds: string[],
 ): Promise<Set<string>> {
   const keys = new Set<string>()
 
@@ -204,6 +123,23 @@ async function loadExistingDedupeKeys(
       .select("normalised_provider_transaction_id_hash, provider_transaction_id_hash")
       .eq("user_id", userId)
       .in("provider_transaction_id_hash", part)
+
+    if (error) {
+      throw new Error(`Failed to check existing transactions: ${error.message}`)
+    }
+    for (const row of data ?? []) {
+      addDedupeKeysForRow(keys, row as Record<string, unknown>)
+    }
+  }
+
+  const fpUnique = [...new Set(fingerprintIds.filter(Boolean))]
+  for (const part of chunk(fpUnique, 200)) {
+    if (part.length === 0) continue
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("normalised_provider_transaction_id_hash, provider_transaction_id_hash, import_fingerprint_hash")
+      .eq("user_id", userId)
+      .in("import_fingerprint_hash", part)
 
     if (error) {
       throw new Error(`Failed to check existing transactions: ${error.message}`)
@@ -335,17 +271,31 @@ export async function syncBankDataForUser(
     }
   }
 
-  const [cats, baLoadResult] = await Promise.all([
+  const [cats, baLoadResult, profileResult] = await Promise.all([
     loadUncategorisedCategoryIds(supabase, userId),
     supabase
       .from("bank_accounts")
       .select("id, account_id, truelayer_account_id_hash")
       .eq("user_id", userId),
+    supabase.from("profiles").select("currency").eq("id", userId).maybeSingle(),
   ])
 
   if (baLoadResult.error) {
     throw new Error(`Failed to load bank accounts: ${baLoadResult.error.message}`)
   }
+
+  if (profileResult.error) {
+    console.warn(
+      `[TrueLayer sync] profile currency load failed: ${profileResult.error.message}`,
+    )
+  }
+
+  const defaultCurrency =
+    !profileResult.error &&
+    typeof profileResult.data?.currency === "string" &&
+    profileResult.data.currency.trim().length > 0
+      ? profileResult.data.currency.trim()
+      : "GBP"
 
   const bankAccountByHash = new Map<
     string,
@@ -427,7 +377,9 @@ export async function syncBankDataForUser(
       bothEndpointsFailedConnections += 1
     }
 
-    const { merged } = mergeLinkedResourcesWithStats(tlAccounts, tlCards)
+    const { merged } = mergeLinkedResourcesWithStats(tlAccounts, tlCards, {
+      defaultCurrency,
+    })
     const rawTotal = tlAccounts.length + tlCards.length
     const bothListCallsSucceeded = !accountsErr && !cardsErr
 
@@ -628,11 +580,14 @@ export async function syncBankDataForUser(
 
     const normalisedIds: string[] = []
     const providerIds: string[] = []
+    const fingerprintIds: string[] = []
     for (const row of pendingRows) {
       const n = row.normalised_provider_transaction_id_hash
       const p = row.provider_transaction_id_hash
+      const f = row.import_fingerprint_hash
       if (typeof n === "string" && n) normalisedIds.push(n)
       if (typeof p === "string" && p) providerIds.push(p)
+      if (typeof f === "string" && f) fingerprintIds.push(f)
     }
 
     const existingKeys = await loadExistingDedupeKeys(
@@ -640,6 +595,7 @@ export async function syncBankDataForUser(
       userId,
       normalisedIds,
       providerIds,
+      fingerprintIds,
     )
 
     const toInsert: Record<string, unknown>[] = []

@@ -1,6 +1,7 @@
 import "server-only"
 
 import { truelayerConfig } from "@/lib/truelayer/config"
+import { isRecord } from "@/lib/truelayer/parse-helpers"
 
 /** OAuth2 token response from TrueLayer auth server (Data API user tokens). */
 export type TrueLayerTokenResponse = {
@@ -55,10 +56,6 @@ function authTokenUrl(): string {
   return truelayerConfig.mode === "sandbox"
     ? "https://auth.truelayer-sandbox.com/connect/token"
     : "https://auth.truelayer.com/connect/token"
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
 }
 
 function readTrueLayerErrorMessage(body: unknown): string | undefined {
@@ -193,37 +190,75 @@ function dataUrl(path: string, query?: Record<string, string | undefined>): stri
   return u.toString()
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function parseRetryAfterMs(res: Response): number | null {
+  const raw = res.headers.get("retry-after")
+  if (!raw?.trim()) return null
+  const n = Number(raw)
+  if (Number.isFinite(n) && n >= 0) {
+    // Heuristic: small values are seconds; large values are ms.
+    return n <= 120 ? Math.round(n * 1000) : Math.round(n)
+  }
+  const d = new Date(raw)
+  const t = d.getTime()
+  if (!Number.isFinite(t)) return null
+  const delta = t - Date.now()
+  return delta > 0 ? delta : 500
+}
+
+const ASYNC_MAX_ATTEMPTS = 8
+const ASYNC_BASE_DELAY_MS = 800
+
+/**
+ * GET from Data API with retries when TrueLayer returns 202 (async preparation).
+ */
 async function getDataJson<T>(
   path: string,
   accessToken: string,
   query?: Record<string, string | undefined>,
 ): Promise<T> {
-  const res = await fetch(dataUrl(path, query), {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-  })
+  let lastParsed: unknown
+  let lastStatus = 0
 
-  const parsed = await parseJsonBody(res)
+  for (let attempt = 0; attempt < ASYNC_MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(dataUrl(path, query), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    })
 
-  if (res.status === 202) {
-    throw new TrueLayerApiError(
-      "TrueLayer returned 202 (async). This client does not handle async Data API responses; retry without async or implement webhook handling.",
-      res.status,
-      parsed,
-    )
+    const parsed = await parseJsonBody(res)
+    lastParsed = parsed
+    lastStatus = res.status
+
+    if (res.status === 202) {
+      const fromHeader = parseRetryAfterMs(res)
+      const delayMs =
+        fromHeader ?? Math.min(10_000, ASYNC_BASE_DELAY_MS * (attempt + 1))
+      await sleep(delayMs)
+      continue
+    }
+
+    if (!res.ok) {
+      const msg =
+        readTrueLayerErrorMessage(parsed) ??
+        `TrueLayer Data API request failed (${res.status})`
+      throw new TrueLayerApiError(msg, res.status, parsed)
+    }
+
+    return parsed as T
   }
 
-  if (!res.ok) {
-    const msg =
-      readTrueLayerErrorMessage(parsed) ??
-      `TrueLayer Data API request failed (${res.status})`
-    throw new TrueLayerApiError(msg, res.status, parsed)
-  }
-
-  return parsed as T
+  throw new TrueLayerApiError(
+    `TrueLayer returned 202 (async) too many times after ${ASYNC_MAX_ATTEMPTS} attempts`,
+    lastStatus,
+    lastParsed,
+  )
 }
 
 type DataListResponse<T> = {

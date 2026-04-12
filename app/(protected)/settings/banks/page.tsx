@@ -12,6 +12,7 @@ type ConnRow = Pick<
   | "expires_at"
   | "created_at"
   | "updated_at"
+  | "truelayer_provider_id"
 >
 
 type AccRow = Pick<
@@ -41,7 +42,7 @@ export default async function SettingsBanksPage({
   const { data: connectionsRaw, error: connErr } = await supabase
     .from("bank_connections")
     .select(
-      "id, status, consent_created_at, expires_at, created_at, updated_at",
+      "id, status, consent_created_at, expires_at, created_at, updated_at, truelayer_provider_id",
     )
     .eq("user_id", user.id)
     .order("created_at", { ascending: true })
@@ -91,6 +92,11 @@ export default async function SettingsBanksPage({
       id: c.id,
       status: c.status,
       institutionLabel,
+      providerId:
+        typeof c.truelayer_provider_id === "string" &&
+        c.truelayer_provider_id.trim().length > 0
+          ? c.truelayer_provider_id.trim()
+          : null,
       lastSyncedAt: lastSynced,
       accounts: accountVms,
     }

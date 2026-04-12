@@ -8,6 +8,8 @@ export type BankConnection = {
   consent_created_at: string | null
   expires_at: string | null
   status: BankConnectionStatus
+  /** TrueLayer `provider_id` from GET /me when the connection was created. */
+  truelayer_provider_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -82,6 +84,10 @@ export type Transaction = {
   /** Provider merchant name at bank import; used for rule matching. */
   merchant_name: string | null
   truelayer_transaction_id: string | null
+  /** Full provider timestamp when available (TrueLayer `timestamp`). */
+  provider_occurred_at?: string | null
+  /** ISO 4217 from the bank/TrueLayer transaction row. */
+  transaction_currency?: string | null
   created_at: string
 }
 

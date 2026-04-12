@@ -13,6 +13,7 @@ describe("addDedupeKeysForRow", () => {
     addDedupeKeysForRow(set, {
       normalised_provider_transaction_id_hash: "norm-1",
       provider_transaction_id_hash: "prov-1",
+      import_fingerprint_hash: null,
     })
     expect(set.has("n:norm-1")).toBe(true)
     expect(set.has("p:prov-1")).toBe(true)
@@ -23,6 +24,7 @@ describe("addDedupeKeysForRow", () => {
     addDedupeKeysForRow(set, {
       normalised_provider_transaction_id_hash: null,
       provider_transaction_id_hash: "prov-only",
+      import_fingerprint_hash: null,
     })
     expect(set.has("p:prov-only")).toBe(true)
     expect(set.size).toBe(1)
@@ -36,6 +38,7 @@ describe("transactionRowIsDuplicate / markTransactionRowSeenInBatch", () => {
     const row = {
       normalised_provider_transaction_id_hash: "new-norm",
       provider_transaction_id_hash: "shared-prov",
+      import_fingerprint_hash: null,
     }
     expect(transactionRowIsDuplicate(existing, batch, row)).toBe(true)
   })
@@ -46,6 +49,7 @@ describe("transactionRowIsDuplicate / markTransactionRowSeenInBatch", () => {
     const row = {
       normalised_provider_transaction_id_hash: "n1",
       provider_transaction_id_hash: "p1",
+      import_fingerprint_hash: null,
     }
     expect(transactionRowIsDuplicate(existing, batch, row)).toBe(false)
     markTransactionRowSeenInBatch(batch, row)
@@ -59,10 +63,12 @@ describe("transactionRowIsDuplicate / markTransactionRowSeenInBatch", () => {
     const first = {
       normalised_provider_transaction_id_hash: null,
       provider_transaction_id_hash: "dup",
+      import_fingerprint_hash: null,
     }
     const second = {
       normalised_provider_transaction_id_hash: "norm-x",
       provider_transaction_id_hash: "dup",
+      import_fingerprint_hash: null,
     }
     expect(transactionRowIsDuplicate(existing, batch, first)).toBe(false)
     markTransactionRowSeenInBatch(batch, first)
@@ -74,8 +80,31 @@ describe("transactionRowIsDuplicate / markTransactionRowSeenInBatch", () => {
       transactionRowIsDuplicate(new Set(), new Set(), {
         normalised_provider_transaction_id_hash: null,
         provider_transaction_id_hash: null,
+        import_fingerprint_hash: null,
       }),
     ).toBe(true)
+  })
+
+  it("allows insert when only import fingerprint is set", () => {
+    expect(
+      transactionRowIsDuplicate(new Set(), new Set(), {
+        normalised_provider_transaction_id_hash: null,
+        provider_transaction_id_hash: null,
+        import_fingerprint_hash: "fp1",
+      }),
+    ).toBe(false)
+  })
+
+  it("treats fingerprint as duplicate when seen in batch", () => {
+    const batch = new Set<string>()
+    const row = {
+      normalised_provider_transaction_id_hash: null,
+      provider_transaction_id_hash: null,
+      import_fingerprint_hash: "fp-dup",
+    }
+    expect(transactionRowIsDuplicate(new Set(), batch, row)).toBe(false)
+    markTransactionRowSeenInBatch(batch, row)
+    expect(transactionRowIsDuplicate(new Set(), batch, row)).toBe(true)
   })
 })
 

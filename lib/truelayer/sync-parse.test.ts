@@ -85,6 +85,19 @@ describe("parseTrueLayerLinkedResource", () => {
     expect(p?.currency).toBe("GBP")
   })
 
+  it("uses defaultCurrency option when provider omits currency", () => {
+    const p = parseTrueLayerLinkedResource(
+      {
+        account_id: "a1",
+        display_name: "Current",
+        provider: {},
+      },
+      "account",
+      { defaultCurrency: "EUR" },
+    )
+    expect(p?.currency).toBe("EUR")
+  })
+
   it("returns null when account_id missing", () => {
     expect(
       parseTrueLayerLinkedResource(

@@ -36,7 +36,9 @@ Mobile-first PWA for quick expense and income tracking. Built with **Next.js (Ap
    2. **Environment** — Live credentials require `TRUELAYER_MODE=live` and `authorizeHost` `auth.truelayer.com`. Sandbox credentials use `sandbox-…` client ids and `auth.truelayer-sandbox.com`.
    3. **Credentials** — Re-copy `client_id` / `client_secret` from the same app in Console as the environment you configured.
 
-2. Apply the database schema (see [`supabase/migrations/20260406200000_spendly_mvp.sql`](supabase/migrations/20260406200000_spendly_mvp.sql)) in the Supabase SQL editor, or use the Supabase CLI.
+2. Apply the database schema (see [`supabase/migrations/20260406200000_spendly_mvp.sql`](supabase/migrations/20260406200000_spendly_mvp.sql)) in the Supabase SQL editor, or use the Supabase CLI. For TrueLayer bank readiness (provider id on connections, richer imported transaction fields, fallback dedupe), also apply [`supabase/migrations/20260412120000_truelayer_bank_readiness.sql`](supabase/migrations/20260412120000_truelayer_bank_readiness.sql).
+
+   The banks settings page uses `GET /api/truelayer/providers` to show how many UK institutions TrueLayer exposes for your `TRUELAYER_CLIENT_ID` and whether each connection’s provider supports the same data scopes the app requests.
 
 3. Install and run:
 

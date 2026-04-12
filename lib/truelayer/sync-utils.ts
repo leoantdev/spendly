@@ -6,6 +6,7 @@
 export type TransactionIdFields = {
   normalised_provider_transaction_id_hash: string | null
   provider_transaction_id_hash: string | null
+  import_fingerprint_hash: string | null
 }
 
 export function parseTransactionIdFields(
@@ -13,11 +14,14 @@ export function parseTransactionIdFields(
 ): TransactionIdFields {
   const n = row.normalised_provider_transaction_id_hash
   const p = row.provider_transaction_id_hash
+  const f = row.import_fingerprint_hash
   return {
     normalised_provider_transaction_id_hash:
       typeof n === "string" && n.length > 0 ? n : null,
     provider_transaction_id_hash:
       typeof p === "string" && p.length > 0 ? p : null,
+    import_fingerprint_hash:
+      typeof f === "string" && f.length > 0 ? f : null,
   }
 }
 
@@ -26,10 +30,14 @@ export function addDedupeKeysForRow(
   set: Set<string>,
   row: Record<string, unknown>,
 ): void {
-  const { normalised_provider_transaction_id_hash: n, provider_transaction_id_hash: p } =
-    parseTransactionIdFields(row)
+  const {
+    normalised_provider_transaction_id_hash: n,
+    provider_transaction_id_hash: p,
+    import_fingerprint_hash: f,
+  } = parseTransactionIdFields(row)
   if (n) set.add(`n:${n}`)
   if (p) set.add(`p:${p}`)
+  if (f) set.add(`f:${f}`)
 }
 
 /**
@@ -40,11 +48,15 @@ export function transactionRowIsDuplicate(
   seenInBatch: Set<string>,
   row: Record<string, unknown>,
 ): boolean {
-  const { normalised_provider_transaction_id_hash: n, provider_transaction_id_hash: p } =
-    parseTransactionIdFields(row)
+  const {
+    normalised_provider_transaction_id_hash: n,
+    provider_transaction_id_hash: p,
+    import_fingerprint_hash: f,
+  } = parseTransactionIdFields(row)
   const keys: string[] = []
   if (n) keys.push(`n:${n}`)
   if (p) keys.push(`p:${p}`)
+  if (f) keys.push(`f:${f}`)
   if (keys.length === 0) return true
   return keys.some((k) => existingKeys.has(k) || seenInBatch.has(k))
 }
@@ -54,10 +66,14 @@ export function markTransactionRowSeenInBatch(
   seenInBatch: Set<string>,
   row: Record<string, unknown>,
 ): void {
-  const { normalised_provider_transaction_id_hash: n, provider_transaction_id_hash: p } =
-    parseTransactionIdFields(row)
+  const {
+    normalised_provider_transaction_id_hash: n,
+    provider_transaction_id_hash: p,
+    import_fingerprint_hash: f,
+  } = parseTransactionIdFields(row)
   if (n) seenInBatch.add(`n:${n}`)
   if (p) seenInBatch.add(`p:${p}`)
+  if (f) seenInBatch.add(`f:${f}`)
 }
 
 export function isPostgresUniqueViolation(err: {

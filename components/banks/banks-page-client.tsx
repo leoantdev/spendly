@@ -96,6 +96,64 @@ function statusLabel(status: BankConnectionVm["status"]): string {
   }
 }
 
+type TrueLayerProviderRow = {
+  provider_id: string
+  display_name: string
+  scopes: string[]
+  country: string
+}
+
+type ProviderCatalogState =
+  | { status: "idle" | "loading" }
+  | {
+      status: "ok"
+      providers: TrueLayerProviderRow[]
+      count: number
+      fullySupportedCount: number
+      requiredScopes: string[]
+    }
+  | { status: "error"; message: string }
+
+function providerSupportsScopes(
+  provider: TrueLayerProviderRow,
+  required: string[],
+): boolean {
+  const set = new Set(provider.scopes.map((s) => s.toLowerCase()))
+  return required.every((r) => set.has(r.toLowerCase()))
+}
+
+function ConnectionProviderHint({
+  providerId,
+  providers,
+  requiredScopes,
+}: {
+  providerId: string
+  providers: TrueLayerProviderRow[]
+  requiredScopes: string[]
+}) {
+  const p = providers.find((x) => x.provider_id === providerId)
+  if (!p) {
+    return (
+      <>
+        Provider ID{" "}
+        <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
+          {providerId}
+        </code>{" "}
+        — not in the current catalog snapshot (reconnect to refresh metadata).
+      </>
+    )
+  }
+  const ok = providerSupportsScopes(p, requiredScopes)
+  return (
+    <>
+      <span className="font-medium text-foreground">{p.display_name}</span>
+      {ok
+        ? " supports the scopes Spendly needs."
+        : " may not expose every data type (some scopes missing vs. this app)."}
+    </>
+  )
+}
+
 function BankConnectionDisconnect({
   connectionId,
   institutionLabel,
@@ -204,6 +262,64 @@ export function BanksPageClient({
   const router = useRouter()
   const [connecting, setConnecting] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogState>({
+    status: "idle",
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    setProviderCatalog({ status: "loading" })
+    void fetch("/api/truelayer/providers")
+      .then(async (res) => {
+        const body = (await res.json().catch(() => null)) as
+          | {
+              providers?: TrueLayerProviderRow[]
+              count?: number
+              fullySupportedCount?: number
+              requiredScopes?: string[]
+              error?: string
+            }
+          | null
+        if (!res.ok) {
+          throw new Error(
+            body && typeof body.error === "string" && body.error
+              ? body.error
+              : "Could not load provider catalog.",
+          )
+        }
+        if (!body?.providers || !Array.isArray(body.providers)) {
+          throw new Error("Invalid provider catalog response.")
+        }
+        return body
+      })
+      .then((body) => {
+        if (cancelled) return
+        const providers = body.providers ?? []
+        setProviderCatalog({
+          status: "ok",
+          providers,
+          count: typeof body.count === "number" ? body.count : providers.length,
+          fullySupportedCount:
+            typeof body.fullySupportedCount === "number"
+              ? body.fullySupportedCount
+              : providers.length,
+          requiredScopes: Array.isArray(body.requiredScopes)
+            ? body.requiredScopes
+            : [],
+        })
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        const message =
+          e instanceof Error && e.message.trim()
+            ? e.message
+            : "Could not load provider catalog."
+        setProviderCatalog({ status: "error", message })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!callbackStatus) {
@@ -354,6 +470,30 @@ export function BanksPageClient({
             before card support was added, reconnect once so credit cards can be
             requested.
           </CardDescription>
+          {providerCatalog.status === "loading" ? (
+            <p className="pt-2 text-xs text-muted-foreground">
+              Loading TrueLayer provider catalog…
+            </p>
+          ) : null}
+          {providerCatalog.status === "error" ? (
+            <p className="pt-2 text-xs text-destructive">
+              {providerCatalog.message}
+            </p>
+          ) : null}
+          {providerCatalog.status === "ok" ? (
+            <p className="pt-2 text-xs text-muted-foreground">
+              TrueLayer lists{" "}
+              <span className="font-medium text-foreground">
+                {providerCatalog.count}
+              </span>{" "}
+              UK providers enabled for this app.{" "}
+              <span className="font-medium text-foreground">
+                {providerCatalog.fullySupportedCount}
+              </span>{" "}
+              support every data scope Spendly requests (accounts, cards,
+              transactions, etc.).
+            </p>
+          ) : null}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <Button
@@ -437,6 +577,15 @@ export function BanksPageClient({
                     <CardDescription>
                       Last synced: {formatSyncedAt(conn.lastSyncedAt)}
                     </CardDescription>
+                    {providerCatalog.status === "ok" && conn.providerId ? (
+                      <p className="text-xs text-muted-foreground">
+                        <ConnectionProviderHint
+                          providerId={conn.providerId}
+                          providers={providerCatalog.providers}
+                          requiredScopes={providerCatalog.requiredScopes}
+                        />
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
                     <BankConnectionDisconnect

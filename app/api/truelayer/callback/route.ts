@@ -121,6 +121,8 @@ export async function GET(request: NextRequest) {
   const nowIso = new Date().toISOString()
 
   try {
+    const providerId = me.provider?.provider_id ?? null
+
     await upsertBankConnectionSecretState({
       userId: user.id,
       truelayerUserId: credentialsId,
@@ -130,6 +132,7 @@ export async function GET(request: NextRequest) {
       expiresAt,
       status: "active",
       updatedAt: nowIso,
+      truelayerProviderId: providerId ?? null,
     })
   } catch (e) {
     console.warn("[TrueLayer callback] Upsert bank_connections failed:", e)
