@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       connectionId: parsed.data.connectionId,
     })
-    revalidatePath("/banks")
+    revalidatePath("/settings/banks")
     if (removed) {
       revalidatePath("/transactions")
       revalidatePath("/dashboard")

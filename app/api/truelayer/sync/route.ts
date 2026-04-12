@@ -19,7 +19,7 @@ export async function POST() {
       supabase,
       source: "manual",
     })
-    revalidatePath("/banks")
+    revalidatePath("/settings/banks")
     if (
       stats.newTransactionsImported > 0 ||
       stats.accountsSynced > 0 ||

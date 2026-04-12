@@ -114,7 +114,7 @@ export function appendBankConnectionStatus(
   origin: string,
   status: BankConnectionRedirectStatus,
 ): URL {
-  const url = new URL("/banks", origin)
+  const url = new URL("/settings/banks", origin)
   url.searchParams.set("bankConnection", status)
   return url
 }

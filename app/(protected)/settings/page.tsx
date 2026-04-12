@@ -1,14 +1,17 @@
 import Link from "next/link"
-import { Building2Icon, ChevronRightIcon } from "lucide-react"
+import {
+  Building2Icon,
+  ChevronRightIcon,
+  SparklesIcon,
+  TagIcon,
+} from "lucide-react"
 
 import { logoutAction } from "@/app/actions/auth"
-import { CategoryManager } from "@/components/categories/category-manager"
-import { CategoryRulesManager } from "@/components/categories/category-rules-manager"
 import { ProfileForm } from "@/components/settings/profile-form"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { getCategories, getCategoryRules, getProfile, getSessionUser } from "@/lib/data"
+import { getProfile, getSessionUser } from "@/lib/data"
 
 export default async function SettingsPage() {
   const user = await getSessionUser()
@@ -16,11 +19,6 @@ export default async function SettingsPage() {
 
   const profile = await getProfile()
   if (!profile) return null
-
-  const [categories, categoryRules] = await Promise.all([
-    getCategories(),
-    getCategoryRules(),
-  ])
 
   return (
     <div className="flex flex-col gap-6 pb-6">
@@ -43,7 +41,7 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <Button variant="outline" className="min-h-11 w-full justify-between" asChild>
-            <Link href="/banks">
+            <Link href="/settings/banks">
               <Building2Icon data-icon="inline-start" aria-hidden />
               Manage bank connections
               <ChevronRightIcon
@@ -57,14 +55,46 @@ export default async function SettingsPage() {
       </Card>
 
       <Card>
-        <CardContent className="pt-6">
-          <CategoryManager categories={categories} />
+        <CardHeader>
+          <CardTitle className="text-base">Categories</CardTitle>
+          <CardDescription>
+            Organise transactions by type with custom categories.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" className="min-h-11 w-full justify-between" asChild>
+            <Link href="/settings/categories">
+              <TagIcon data-icon="inline-start" aria-hidden />
+              Manage categories
+              <ChevronRightIcon
+                className="text-muted-foreground"
+                data-icon="inline-end"
+                aria-hidden
+              />
+            </Link>
+          </Button>
         </CardContent>
       </Card>
 
       <Card>
-        <CardContent className="pt-6">
-          <CategoryRulesManager rules={categoryRules} categories={categories} />
+        <CardHeader>
+          <CardTitle className="text-base">Auto-categorise rules</CardTitle>
+          <CardDescription>
+            Match imported merchant names to categories automatically.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" className="min-h-11 w-full justify-between" asChild>
+            <Link href="/settings/rules">
+              <SparklesIcon data-icon="inline-start" aria-hidden />
+              Manage rules
+              <ChevronRightIcon
+                className="text-muted-foreground"
+                data-icon="inline-end"
+                aria-hidden
+              />
+            </Link>
+          </Button>
         </CardContent>
       </Card>
 

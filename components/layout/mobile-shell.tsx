@@ -10,13 +10,18 @@ const titles: Record<string, string> = {
   "/transactions": "Transactions",
   "/transactions/new": "Add",
   "/budgets": "Budgets",
-  "/banks": "Banks",
   "/settings": "Settings",
+  "/settings/categories": "Categories",
+  "/settings/rules": "Auto-categorise rules",
+  "/settings/banks": "Banks",
 }
 
 function titleForPath(pathname: string) {
   if (pathname.startsWith("/transactions/new")) return titles["/transactions/new"]
   if (pathname.startsWith("/transactions")) return titles["/transactions"]
+  if (pathname.startsWith("/settings/categories")) return titles["/settings/categories"]
+  if (pathname.startsWith("/settings/rules")) return titles["/settings/rules"]
+  if (pathname.startsWith("/settings/banks")) return titles["/settings/banks"]
   return titles[pathname] ?? "Spendly"
 }
 

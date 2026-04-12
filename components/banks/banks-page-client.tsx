@@ -218,7 +218,7 @@ export function BanksPageClient({
       now - lastBankCallbackHandled.at < BANK_CALLBACK_DEDUPE_MS
 
     if (duplicate) {
-      router.replace("/banks")
+      router.replace("/settings/banks")
       return
     }
 
@@ -244,7 +244,7 @@ export function BanksPageClient({
         break
     }
 
-    router.replace("/banks")
+    router.replace("/settings/banks")
   }, [callbackStatus, router])
 
   async function handleConnect() {
