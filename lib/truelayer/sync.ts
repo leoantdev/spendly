@@ -143,6 +143,8 @@ function mapTrueLayerTransaction(
   const description = readString(tl, "description")
   const merchant = readString(tl, "merchant_name")
   const note = description ?? merchant ?? null
+  /** Many providers omit `merchant_name`; use description so auto-categorise / rules can match. */
+  const merchantForRow = merchant ?? description ?? null
 
   const abs = Math.abs(rawAmount)
   const amountStr = abs.toFixed(2)
@@ -155,7 +157,7 @@ function mapTrueLayerTransaction(
     amount: amountStr,
     occurred_at: occurredAt,
     note,
-    merchant_name: merchant,
+    merchant_name: merchantForRow,
     truelayer_transaction_id: tlTransactionId,
     normalised_provider_transaction_id_hash: normalisedHash,
     provider_transaction_id_hash: providerIdHash,

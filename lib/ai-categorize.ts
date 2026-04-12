@@ -115,11 +115,14 @@ export async function aiCategorizeTransactions(
     `[ai-categorize] ${transactions.length} transaction(s), ${batchCount} batch(es), model=${modelId}`,
   )
 
+  /** Chat Completions API — avoids Responses API (`api.responses.write`) required by `openai(modelId)` default in AI SDK 5+. */
+  const model = openai.chat(modelId)
+
   for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
     const batch = transactions.slice(i, i + BATCH_SIZE)
     try {
       const { object } = await generateObject({
-        model: openai(modelId),
+        model,
         schema: batchResponseSchema,
         system:
           "You categorise personal finance transactions. Each transaction must use exactly one category id from the list. " +

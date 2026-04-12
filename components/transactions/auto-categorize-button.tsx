@@ -38,11 +38,11 @@ export function AutoCategorizeButton({
             return
           }
           if (res.categorized === 0) {
-            toast.message("No matches", {
+            toast.message("Nothing categorised", {
               description:
                 res.total === 0
                   ? "No uncategorised transactions."
-                  : `${res.total} uncategorised transaction(s) had no matching merchant rules.`,
+                  : "No transactions were categorised this time.",
             })
           } else {
             toast.success(
@@ -50,7 +50,7 @@ export function AutoCategorizeButton({
                 ? "1 transaction categorised"
                 : `${res.categorized} transactions categorised`,
               {
-                description: `Matched rules for ${res.categorized} of ${res.total} uncategorised.`,
+                description: `Categorised ${res.categorized} of ${res.total} uncategorised.`,
               },
             )
           }

@@ -89,6 +89,20 @@ function matchesPattern(
   return merchantNorm.includes(p)
 }
 
+/**
+ * Label used for rule matching and AI: bank `merchant_name` when present, else transaction `note`
+ * (e.g. TrueLayer often puts the counterparty in `description` only).
+ */
+export function categorizationMerchantLabel(tx: {
+  merchant_name?: unknown
+  note?: unknown
+}): string | null {
+  const m = typeof tx.merchant_name === "string" ? tx.merchant_name.trim() : ""
+  if (m) return m
+  const n = typeof tx.note === "string" ? tx.note.trim() : ""
+  return n || null
+}
+
 export type CategorizeTransactionsResult = {
   categorized: number
   total: number
@@ -96,7 +110,8 @@ export type CategorizeTransactionsResult = {
 
 /**
  * Assigns categories to uncategorised transactions using the user's rules.
- * Only considers rows with non-empty `merchant_name`. Rules must match transaction `type`.
+ * Only considers rows with a non-empty categorisation label (`merchant_name` or `note` fallback).
+ * Rules must match transaction `type`.
  */
 export async function categorizeTransactions(
   supabase: CategorizeSupabase,
@@ -133,22 +148,16 @@ export async function categorizeTransactions(
     merchant_name: unknown
     type: unknown
     category_id: unknown
-    note?: unknown
+    note: unknown
   }
   const rows: UncatTxRow[] = []
   for (let from = 0; ; from += PAGE) {
     const to = from + PAGE - 1
-    let q = includeNotesInAi
-      ? supabase
-          .from("transactions")
-          .select("id, merchant_name, type, category_id, note")
-          .eq("user_id", userId)
-          .in("category_id", [uncategorised.expense, uncategorised.income])
-      : supabase
-          .from("transactions")
-          .select("id, merchant_name, type, category_id")
-          .eq("user_id", userId)
-          .in("category_id", [uncategorised.expense, uncategorised.income])
+    let q = supabase
+      .from("transactions")
+      .select("id, merchant_name, type, category_id, note")
+      .eq("user_id", userId)
+      .in("category_id", [uncategorised.expense, uncategorised.income])
     if (transactionIds !== undefined && transactionIds.length > 0) {
       q = q.in("id", transactionIds)
     }
@@ -167,10 +176,10 @@ export async function categorizeTransactions(
 
   for (const tx of rows) {
     if (typeof tx.id !== "string") continue
-    const rawM = tx.merchant_name
-    if (typeof rawM !== "string" || !rawM.trim()) continue
+    const label = categorizationMerchantLabel(tx)
+    if (!label) continue
 
-    const merchantNorm = rawM.trim().toLowerCase()
+    const merchantNorm = label.toLowerCase()
     const txType = tx.type as TransactionType
 
     let matchedCategory: string | null = null
@@ -237,22 +246,21 @@ export async function categorizeTransactions(
   const eligibleForAi: EligibleAiTx[] = []
   for (const tx of rows) {
     if (typeof tx.id !== "string") continue
-    const rawM = tx.merchant_name
-    if (typeof rawM !== "string" || !rawM.trim()) continue
+    const label = categorizationMerchantLabel(tx)
+    if (!label) continue
     if (matchedIds.has(tx.id)) continue
     const txType = tx.type
     if (txType !== "income" && txType !== "expense") continue
-    const norm = rawM.trim().toLowerCase()
+    const norm = label.toLowerCase()
     if (existingMerchantNorms.has(norm)) continue
-    const noteRaw = includeNotesInAi ? tx.note : undefined
+    const noteRaw = typeof tx.note === "string" ? tx.note.trim() : ""
+    const noteForAi =
+      includeNotesInAi && noteRaw && noteRaw !== label ? noteRaw : null
     eligibleForAi.push({
       id: tx.id,
-      merchant_name: rawM.trim(),
+      merchant_name: label,
       type: txType,
-      note:
-        includeNotesInAi && typeof noteRaw === "string" && noteRaw.trim()
-          ? noteRaw
-          : null,
+      note: noteForAi,
     })
   }
 
